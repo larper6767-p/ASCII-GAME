@@ -52,6 +52,11 @@ class App:
         self.state = GameState.PLAYING
         self.running = True
 
+        # Render one frame before the timed loop so glyph/light/parallax
+        # caches are warm; it does not advance physics or change state.
+        self.session.draw(self.renderer)
+        self.renderer.flip()
+
     def process_events(self):
         events = pygame.event.get()
         for event in events:

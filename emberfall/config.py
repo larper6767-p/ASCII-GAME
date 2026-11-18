@@ -3,18 +3,34 @@
 # ---------------------------------------------------------------------------
 # Display
 # ---------------------------------------------------------------------------
-COLS = 100                     # visible grid width in characters
-ROWS = 28                      # visible grid height in characters
-FONT_SIZE = 16
-# On Windows this list currently resolves to Courier New (11x19 cells).
-# Put "consolas" first to compare a slightly narrower glyph.
-FONT_NAME = "dejavusansmono,consolas,menlo,couriernew,monospace"
-FONT_BOLD = True
+COLS = 100                     # visible physics cells across
+ROWS = 28                      # visible physics cells down
+
+# Renderer v2 decouples physics cells from the character grid. One physics
+# cell is drawn as GLYPH_SCALE x GLYPH_SCALE small glyph cells. None of the
+# physics constants below are expressed in glyph cells.
+GLYPH_SCALE = 2                # 2x2 glyph cells per physics tile
+GLYPH_CELL_W = 6               # small glyph cell, pixels
+GLYPH_CELL_H = 10
+GLYPH_FONT_SIZE = 8
+GLYPH_FONT_PATH = "assets/fonts/DejaVuSansMono.ttf"
+GLYPH_FONT_BOLD = False
 
 RENDER_FPS = 60                # render cap; physics is independent of this
 FIXED_DT = 1.0 / 60.0          # physics step
 MAX_FRAME_DT = 0.25            # ignore huge stalls (seconds)
 MAX_STEPS_PER_FRAME = 15       # spiral-of-death guard
+
+# Renderer v2 effects. These are visual-only and never feed physics.
+LIGHT_AMBIENT = 0.50           # base light level (0..1)
+LIGHT_PLAYER_RADIUS = 9.0      # physics cells
+LIGHT_PLAYER_STRENGTH = 0.95
+LIGHT_PROJECTILE_RADIUS = 4.0
+LIGHT_PROJECTILE_STRENGTH = 0.70
+PARALLAX_FACTORS = (0.12, 0.30, 0.55)
+BLOOM_SCALE = 8                # glow buffer is 1/8 screen resolution
+BLOOM_BLUR_PASSES = 2
+RENDER_PROFILE = False         # collect per-step timings when True
 
 # ---------------------------------------------------------------------------
 # Physics (float cell units)
