@@ -1,7 +1,7 @@
 """Gameplay session: owns the level, entities, combat resolution and drawing."""
 import random
 
-from . import combat, config, fx, sprites
+from . import combat, config, fx
 from .entities import Player, create_enemy
 from .input import InputState
 from .physics import overlap
@@ -112,76 +112,18 @@ class GameSession:
     # Drawing
     # ------------------------------------------------------------------
     def draw(self, renderer):
-        renderer.clear(config.BG)
         p = self.player
         ox = self.camera.offset + self.shake.x_offset()
-
-        for sy in range(config.ROWS):
-            for sx in range(config.COLS):
-                wx = ox + sx
-                tile = self.level.tile_at(wx, sy)
-                if tile == "#":
-                    v = 70 + ((wx * 7 + sy * 13) % 3) * 12
-                    renderer.put(sx, sy, "#", (v, v, v + 10))
-                elif tile == "=":
-                    renderer.put(sx, sy, "=", (170, 120, 70))
-                elif tile == '"':
-                    char, color = fx.grass_char(wx, sy, p, self.time)
-                    renderer.put(sx, sy, char, color)
-
-        for enemy in self.enemies:
-            color = config.WHITE if enemy.flash > 0.0 else enemy.color
-            renderer.put_sprite(enemy.sprite(), enemy.x, enemy.y, color, ox)
-            if enemy.telegraph:
-                tx = int(round(enemy.x + enemy.w / 2.0)) - ox
-                ty = int(round(enemy.y)) - 1
-                renderer.put(tx, ty, "!", enemy.data["windup_color"])
-
-        for projectile in self.projectiles.items:
-            renderer.put(
-                int(round(projectile.x)) - ox,
-                int(round(projectile.y)),
-                projectile.char,
-                projectile.color,
-            )
-
-        if p.inv <= 0.0 or int(p.inv * 20) % 2 == 0:
-            renderer.put_sprite(p.sprite(), p.x, p.y, config.PLAYER_COLOR, ox)
-
-        if p.attacking and p.attack_t >= config.ATTACK_STARTUP:
-            if p.pogo:
-                slash = sprites.SLASH_DOWN
-                bx, by = p.x, p.y + p.h
-            else:
-                slash = sprites.SLASH if p.facing > 0 else sprites.mirror(sprites.SLASH)
-                by = p.y
-                if p.facing > 0:
-                    bx = p.x + p.w
-                else:
-                    bx = p.x - config.ATTACK_REACH
-            if p.attack_t < config.ATTACK_ACTIVE_END:
-                color = (255, 255, 200)
-            else:
-                color = (130, 130, 110)
-            renderer.put_sprite(slash, bx, by, color, ox)
-
-        for particle in self.particles.items:
-            renderer.put(int(particle.x) - ox, int(particle.y),
-                         particle.char, particle.color)
-
-        renderer.put_text(
-            2, 1,
-            "HP [" + "#" * p.hp + "-" * (p.max_hp - p.hp) + "]",
-            config.HUD_HEALTH_COLOR,
+        renderer.begin_frame(ox)
+        renderer.draw_parallax(ox, self.time)
+        renderer.update_lighting(
+            p, self.enemies, self.projectiles, ox
         )
-        renderer.put_text(
-            2, 2,
-            "A/D move  S+J pogo  SPACE jump  J attack  R restart",
-            config.HUD_HELP_COLOR,
-        )
-        if not self.enemies:
-            renderer.put_text(
-                config.COLS // 2 - 8, 6,
-                "ALL ENEMIES SLAIN",
-                config.HUD_CLEAR_COLOR,
-            )
+        renderer.draw_terrain(self.level, ox, self.time, p)
+        renderer.draw_enemies(self.enemies, ox)
+        renderer.draw_player(p, ox, self.time)
+        renderer.draw_projectiles(self.projectiles, ox)
+        renderer.draw_slash(p, ox)
+        renderer.draw_particles(self.particles, ox)
+        renderer.draw_hud(p, self.enemies)
+        renderer.end_frame()
