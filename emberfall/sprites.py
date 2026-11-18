@@ -16,6 +16,7 @@ PLAYER_RUN = (
 PLAYER_AIR = (" o ", "\\|/", "/ \\")
 PLAYER_ATTACK = (" o ", "/|>", "/ \\")
 SLASH = ("  \\ ", "   )", "  / ")
+SLASH_DOWN = (" | ", "\\|/", " v ")
 
 CRAWLER_FRAMES = (
     ("/^\\", "<_>"),
@@ -25,4 +26,9 @@ CRAWLER_FRAMES = (
 FLYER_FRAMES = (
     ("\\ ^ /", " <o> "),
     ("/ v \\", " <o> "),
+)
+
+SPITTER_FRAMES = (
+    (" ^ ", "(o>", "/|\\"),
+    (" ^ ", "(O>", "/|\\"),
 )

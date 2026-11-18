@@ -6,6 +6,8 @@ def attack_hitbox(player):
     """Return the sword AABB in world cells, or None when inactive."""
     if not (config.ATTACK_STARTUP <= player.attack_t < config.ATTACK_ACTIVE_END):
         return None
+    if player.pogo:
+        return (player.x, player.y + player.h, player.w, config.ATTACK_REACH)
     if player.facing > 0:
         bx = player.x + player.w
     else:

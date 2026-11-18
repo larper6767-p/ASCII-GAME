@@ -67,13 +67,14 @@ def build_demo_level(rng):
             g[24][x] = '"'
 
     # Early crawlers teach ground combat; flyers are placed over the
-    # platforms so their windup and dive are easy to read.
+    # platforms so their windup and dive are easy to read. The spitter holds
+    # range on the open ground past the central wall.
     enemy_spawns = (
         ("crawler", 30, 10),
         ("flyer", 45, 14),
         ("crawler", 58, 10),
         ("flyer", 75, 14),
-        ("crawler", 96, 10),
+        ("spitter", 100, 10),
         ("flyer", 110, 12),
         ("crawler", 135, 10),
     )

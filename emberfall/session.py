@@ -5,6 +5,7 @@ from . import combat, config, fx, sprites
 from .entities import Player, create_enemy
 from .input import InputState
 from .physics import overlap
+from .projectiles import ProjectileSystem
 from .world import Camera, build_demo_level
 
 
@@ -15,6 +16,7 @@ class GameSession:
         self.time = 0.0
         self.player = None
         self.enemies = []
+        self.projectiles = None
         self.particles = None
         self.camera = None
         self.hitstop = None
@@ -27,6 +29,7 @@ class GameSession:
         self.player = Player(px, py)
         self.enemies = [create_enemy(kind, x, y, self.rng)
                         for kind, x, y in self.level.enemy_spawns]
+        self.projectiles = ProjectileSystem()
         self.particles = fx.Particles(self.rng)
         self.camera = Camera(config.COLS, self.level.width)
         self.hitstop = combat.HitStop()
@@ -39,7 +42,8 @@ class GameSession:
         if inp.was_pressed("jump"):
             self.player.jump_buf = config.JUMP_BUFFER_TIME
         if inp.was_pressed("attack"):
-            self.player.start_attack()  # ignored while stunned or already swinging
+            # Down + attack is a pogo only while airborne.
+            self.player.start_attack(inp.is_held("down"))
 
         self.shake.update(dt)
         if self.hitstop.active:
@@ -52,7 +56,7 @@ class GameSession:
         p.update(dt, self.level, move_axis, inp.is_held("jump"))
 
         for enemy in self.enemies:
-            enemy.update(dt, self.level, p)
+            enemy.update(dt, self.level, p, self.projectiles)
 
         # Sword hits, resolved before contact damage. Enemy state never
         # prevents damage, so every enemy can be hit during any windup.
@@ -62,6 +66,8 @@ class GameSession:
                 if enemy not in p.hit_set and overlap(attack_box, enemy.rect):
                     p.hit_set.add(enemy)
                     combat.damage_enemy(enemy, p.facing)
+                    if p.pogo:
+                        p.pogo_bounce()
                     self.hitstop.trigger(config.SWORD_HITSTOP)
                     self.shake.trigger(config.HIT_SHAKE)
                     enemy.hit_burst(self.particles)
@@ -69,19 +75,19 @@ class GameSession:
                         enemy.death_burst(self.particles)
                         self.enemies.remove(enemy)
 
+        # Projectiles: moving shots never interact with the sword.
+        self.projectiles.update(dt, self.level)
+        projectile = self.projectiles.pop_overlap(p.rect)
+        if projectile is not None and p.inv <= 0.0:
+            self._hurt_player(p, projectile.x, projectile.damage)
+
         # Contact damage. Each type declares which states are dangerous.
         if p.inv <= 0.0:
             for enemy in self.enemies:
                 if (enemy.contact_damage_enabled
                         and overlap(p.rect, enemy.rect)):
-                    combat.damage_player(
+                    self._hurt_player(
                         p, enemy.x, enemy.data["contact_damage"])
-                    self.hitstop.trigger(config.HURT_HITSTOP)
-                    self.shake.trigger(config.HURT_SHAKE)
-                    self.particles.burst(
-                        p.x + 1.5, p.y + 1.5, 14,
-                        config.PLAYER_HURT_PARTICLE_COLORS,
-                    )
                     break
 
         if p.hp <= 0:
@@ -92,6 +98,15 @@ class GameSession:
 
         target = p.x + p.w / 2.0 - config.COLS / 2.0
         self.camera.update(target, dt)
+
+    def _hurt_player(self, player, source_x, damage):
+        combat.damage_player(player, source_x, damage)
+        self.hitstop.trigger(config.HURT_HITSTOP)
+        self.shake.trigger(config.HURT_SHAKE)
+        self.particles.burst(
+            player.x + 1.5, player.y + 1.5, 14,
+            config.PLAYER_HURT_PARTICLE_COLORS,
+        )
 
     # ------------------------------------------------------------------
     # Drawing
@@ -122,20 +137,33 @@ class GameSession:
                 ty = int(round(enemy.y)) - 1
                 renderer.put(tx, ty, "!", enemy.data["windup_color"])
 
+        for projectile in self.projectiles.items:
+            renderer.put(
+                int(round(projectile.x)) - ox,
+                int(round(projectile.y)),
+                projectile.char,
+                projectile.color,
+            )
+
         if p.inv <= 0.0 or int(p.inv * 20) % 2 == 0:
             renderer.put_sprite(p.sprite(), p.x, p.y, config.PLAYER_COLOR, ox)
 
         if p.attacking and p.attack_t >= config.ATTACK_STARTUP:
-            slash = sprites.SLASH if p.facing > 0 else sprites.mirror(sprites.SLASH)
-            if p.facing > 0:
-                bx = p.x + p.w
+            if p.pogo:
+                slash = sprites.SLASH_DOWN
+                bx, by = p.x, p.y + p.h
             else:
-                bx = p.x - config.ATTACK_REACH
+                slash = sprites.SLASH if p.facing > 0 else sprites.mirror(sprites.SLASH)
+                by = p.y
+                if p.facing > 0:
+                    bx = p.x + p.w
+                else:
+                    bx = p.x - config.ATTACK_REACH
             if p.attack_t < config.ATTACK_ACTIVE_END:
                 color = (255, 255, 200)
             else:
                 color = (130, 130, 110)
-            renderer.put_sprite(slash, bx, p.y, color, ox)
+            renderer.put_sprite(slash, bx, by, color, ox)
 
         for particle in self.particles.items:
             renderer.put(int(particle.x) - ox, int(particle.y),
@@ -148,7 +176,7 @@ class GameSession:
         )
         renderer.put_text(
             2, 2,
-            "A/D move  SPACE jump  J attack  R restart",
+            "A/D move  S+J pogo  SPACE jump  J attack  R restart",
             config.HUD_HELP_COLOR,
         )
         if not self.enemies:

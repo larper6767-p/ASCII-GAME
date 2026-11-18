@@ -49,8 +49,14 @@ ATTACK_ACTIVE_END = 0.18       # hitbox disappears here
 ATTACK_TOTAL = 0.32            # full swing duration
 ATTACK_REACH = 4               # cells in front of the player
 ATTACK_HEIGHT = 3
+POGO_BOUNCE_SPEED = 22.0       # upward velocity after a downward hit
 
 # Enemy stats are data-driven in ENEMY_DATA at the bottom of this file.
+
+# ---------------------------------------------------------------------------
+# Projectiles
+# ---------------------------------------------------------------------------
+PROJECTILE_LIFETIME = 8.0      # safety cleanup for shots that miss
 
 # ---------------------------------------------------------------------------
 # Combat juice
@@ -138,6 +144,35 @@ ENEMY_DATA = {
         "float_freq_x": 0.9,
         "float_freq_y": 2.0,
         "color": (195, 120, 230),
+        "windup_color": (255, 225, 90),
+        "attack_color": (255, 150, 80),
+    },
+    "spitter": {
+        "w": 3,
+        "h": 3,
+        "hp": 3,
+        "speed": 7.0,
+        "contact_damage": 1,
+        "contact_states": ("idle", "windup", "attack", "recover"),
+        "windup_time": 0.50,
+        "attack_time": 0.15,
+        "recover_time": 0.40,
+        "cooldown": 1.10,
+        "knockback_x": 18.0,
+        "knockback_y": -10.0,
+        "stun_time": 0.30,
+        "flash_time": 0.12,
+        "stun_decel": 30.0,
+        "anim_fps": 5.0,
+        "preferred_range": 13.0,
+        "range_tolerance": 3.0,
+        "aggro_x": 28.0,
+        "aggro_y": 16.0,
+        "projectile_speed": 13.0,
+        "projectile_damage": 1,
+        "projectile_color": (150, 255, 150),
+        "projectile_char": "*",
+        "color": (115, 215, 125),
         "windup_color": (255, 225, 90),
         "attack_color": (255, 150, 80),
     },

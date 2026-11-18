@@ -15,6 +15,7 @@ class Player(Body):
         self.jump_buf = 0.0
         self.jump_cut_armed = False
         self.attack_t = -1.0
+        self.pogo = False
         self.hit_set = set()
         self.inv = 0.0
         self.stun = 0.0
@@ -24,13 +25,20 @@ class Player(Body):
     def attacking(self):
         return self.attack_t >= 0.0
 
-    def start_attack(self):
-        """Begin a swing. Returns False while stunned or already swinging."""
+    def start_attack(self, pogo=False):
+        """Begin a swing; a requested pogo becomes downward when airborne."""
         if self.stun > 0.0 or self.attacking:
             return False
         self.attack_t = 0.0
+        self.pogo = bool(pogo and not self.on_ground)
         self.hit_set = set()
         return True
+
+    def pogo_bounce(self):
+        """Bounce upward from a downward hit without granting i-frames."""
+        self.vy = -config.POGO_BOUNCE_SPEED
+        self.jump_cut_armed = False
+        self.on_ground = False
 
     def update(self, dt, level, move_axis, jump_held):
         self.inv -= dt
@@ -40,10 +48,16 @@ class Player(Body):
         if self.stun <= 0.0:
             if move_axis and not self.attacking:
                 self.facing = move_axis
-            speed = config.RUN_SPEED * (config.ATTACK_MOVE_MULT if self.attacking else 1.0)
-            target_vx = move_axis * speed
-            accel = config.ACCEL_RUN if move_axis else config.DECEL_RUN
-            self.vx = approach(self.vx, target_vx, accel * dt)
+            air_attack = self.attacking and not self.on_ground
+            # An air attack keeps its momentum. With a direction held it can
+            # still steer at full speed; without one, velocity is preserved.
+            if not (air_attack and not move_axis):
+                speed = config.RUN_SPEED
+                if self.attacking and not air_attack:
+                    speed *= config.ATTACK_MOVE_MULT
+                target_vx = move_axis * speed
+                accel = config.ACCEL_RUN if move_axis else config.DECEL_RUN
+                self.vx = approach(self.vx, target_vx, accel * dt)
         else:
             self.vx = approach(self.vx, 0.0, config.DECEL_STUN * dt)
 
@@ -72,6 +86,7 @@ class Player(Body):
             self.attack_t += dt
             if self.attack_t >= config.ATTACK_TOTAL:
                 self.attack_t = -1.0
+                self.pogo = False
 
     def sprite(self):
         if self.attacking:
@@ -86,9 +101,11 @@ class Player(Body):
 
 
 class EnemyState(enum.Enum):
+    IDLE = "idle"
     PATROL = "patrol"
     FLOAT = "float"
     WINDUP = "windup"
+    ATTACK = "attack"
     DIVE = "dive"
     RECOVER = "recover"
 
@@ -156,7 +173,7 @@ class Enemy(Body):
         particles.burst(self.x + self.w / 2.0, self.y + self.h / 2.0, 25,
                         config.DEATH_PARTICLE_COLORS, speed=20.0)
 
-    def update(self, dt, level, player):
+    def update(self, dt, level, player, projectiles=None):
         raise NotImplementedError
 
 
@@ -168,7 +185,7 @@ class Crawler(Enemy):
         self.dir = rng.choice((-1, 1))
         self.set_state(EnemyState.PATROL)
 
-    def update(self, dt, level, player):
+    def update(self, dt, level, player, projectiles=None):
         self.update_timers(dt)
 
         if self.stun > 0.0:
@@ -279,7 +296,7 @@ class Flyer(Enemy):
                 and dy <= self.data["aggro_y"]):
             self._enter_windup(player)
 
-    def update(self, dt, level, player):
+    def update(self, dt, level, player, projectiles=None):
         self.update_timers(dt)
         px, _ = self._player_center(player)
         self.facing = 1 if px >= self.x + self.w / 2.0 else -1
@@ -317,9 +334,129 @@ class Flyer(Enemy):
         return frame if self.facing > 0 else sprites.mirror(frame)
 
 
+class Spitter(Enemy):
+    """Ground enemy that keeps its preferred range and fires projectiles.
+
+    IDLE repositions and waits out its cooldown; WINDUP is a half-second
+    colour-coded telegraph; ATTACK spawns exactly one shot; RECOVER delays
+    the next attempt.
+    """
+
+    def __init__(self, x, y, rng):
+        super().__init__(x, y, "spitter", rng)
+        self.facing = -1
+        self.cooldown = self.data["cooldown"]
+        self.set_state(EnemyState.IDLE)
+
+    @property
+    def color(self):
+        if self.state is EnemyState.WINDUP:
+            return self.data["windup_color"]
+        if self.state is EnemyState.ATTACK:
+            return self.data["attack_color"]
+        return super().color
+
+    @property
+    def telegraph(self):
+        return self.state is EnemyState.WINDUP
+
+    def _player_center(self, player):
+        return player.x + player.w / 2.0, player.y + player.h / 2.0
+
+    def _ledge_ahead(self, level, direction):
+        if not self.on_ground:
+            return False
+        if direction > 0:
+            front = int(self.x + self.w + 0.3)
+        else:
+            front = int(self.x - 0.3)
+        return not level.solid_at(front, int(self.y + self.h + 0.1))
+
+    def _fall_and_move(self, dt, level):
+        self.vy = min(self.vy + config.GRAVITY * dt, config.MAX_FALL)
+        return self.move(dt, level)
+
+    def _ground_step(self, dt, level, move_dir=0.0):
+        self.vx = move_dir * self.data["speed"] if move_dir else 0.0
+        return self._fall_and_move(dt, level)
+
+    def _spawn_projectile(self, projectiles, player):
+        if projectiles is None:
+            return
+        px, _ = self._player_center(player)
+        direction = 1 if px >= self.x + self.w / 2.0 else -1
+        self.facing = direction
+        sx = self.x + (self.w if direction > 0 else -1.0)
+        sy = self.y + self.h / 2.0 - 0.5
+        projectiles.spawn(
+            sx, sy,
+            direction * self.data["projectile_speed"], 0.0,
+            damage=self.data["projectile_damage"],
+            color=self.data["projectile_color"],
+            char=self.data["projectile_char"],
+        )
+
+    def _update_idle(self, dt, level, player):
+        self.cooldown = max(0.0, self.cooldown - dt)
+        px, py = self._player_center(player)
+        dx = px - (self.x + self.w / 2.0)
+        self.facing = 1 if dx >= 0.0 else -1
+        dist = abs(dx)
+
+        move_dir = 0.0
+        if dist <= self.data["aggro_x"]:
+            if dist > self.data["preferred_range"] + self.data["range_tolerance"]:
+                move_dir = self.facing
+            elif dist < self.data["preferred_range"] - self.data["range_tolerance"]:
+                move_dir = -self.facing
+        if move_dir and self._ledge_ahead(level, move_dir):
+            move_dir = 0.0
+        self._ground_step(dt, level, move_dir)
+
+        dy = abs(py - (self.y + self.h / 2.0))
+        if (self.cooldown <= 0.0
+                and dist <= self.data["aggro_x"]
+                and dy <= self.data["aggro_y"]):
+            self.vx = 0.0
+            self.set_state(EnemyState.WINDUP, self.data["windup_time"])
+
+    def update(self, dt, level, player, projectiles=None):
+        self.update_timers(dt)
+
+        if self.stun > 0.0:
+            self.vx = approach(self.vx, 0.0, self.data["stun_decel"] * dt)
+            self._fall_and_move(dt, level)
+            return
+
+        if self.state is EnemyState.IDLE:
+            self._update_idle(dt, level, player)
+
+        elif self.state is EnemyState.WINDUP:
+            self._ground_step(dt, level)
+            if self.timed_out:
+                self.set_state(EnemyState.ATTACK, self.data["attack_time"])
+                self._spawn_projectile(projectiles, player)
+
+        elif self.state is EnemyState.ATTACK:
+            self._ground_step(dt, level)
+            if self.timed_out:
+                self.set_state(EnemyState.RECOVER, self.data["recover_time"])
+
+        elif self.state is EnemyState.RECOVER:
+            self._ground_step(dt, level)
+            if self.timed_out:
+                self.cooldown = self.data["cooldown"]
+                self.set_state(EnemyState.IDLE)
+
+    def sprite(self):
+        frame = sprites.SPITTER_FRAMES[int(self.anim * self.data["anim_fps"]) % 2]
+        return frame if self.facing > 0 else sprites.mirror(frame)
+
+
 ENEMY_CLASSES = {
     "crawler": Crawler,
     "flyer": Flyer,
+    "spitter": Spitter,
 }
 
 
