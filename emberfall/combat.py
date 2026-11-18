@@ -14,17 +14,13 @@ def attack_hitbox(player):
 
 
 def damage_enemy(enemy, direction):
-    """Apply one sword hit. Caller handles flash FX and death removal."""
-    enemy.hp -= 1
-    enemy.vx = direction * config.ENEMY_KNOCKBACK_X
-    enemy.vy = config.ENEMY_KNOCKBACK_Y
-    enemy.stun = config.ENEMY_STUN_TIME
-    enemy.flash = config.ENEMY_FLASH_TIME
+    """Apply one sword hit. Caller handles FX and death removal."""
+    enemy.take_hit(direction)
 
 
-def damage_player(player, source_x):
-    """Apply one contact hit and launch the player away from the source."""
-    player.hp -= 1
+def damage_player(player, source_x, damage=1):
+    """Apply a contact hit and launch the player away from the source."""
+    player.hp -= damage
     player.inv = config.PLAYER_IFRAMES
     player.stun = config.PLAYER_STUN_TIME
     direction = 1 if player.x > source_x else -1

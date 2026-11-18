@@ -66,8 +66,17 @@ def build_demo_level(rng):
         if g[24][x] == " " and rng.random() < 0.6:
             g[24][x] = '"'
 
-    enemy_spawns = ((30, 10), (45, 10), (58, 10), (75, 10),
-                    (96, 10), (110, 10), (135, 10))
+    # Early crawlers teach ground combat; flyers are placed over the
+    # platforms so their windup and dive are easy to read.
+    enemy_spawns = (
+        ("crawler", 30, 10),
+        ("flyer", 45, 14),
+        ("crawler", 58, 10),
+        ("flyer", 75, 14),
+        ("crawler", 96, 10),
+        ("flyer", 110, 12),
+        ("crawler", 135, 10),
+    )
     return Level(g, enemy_spawns, player_spawn=(4.0, 20.0))
 
 

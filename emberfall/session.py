@@ -2,7 +2,7 @@
 import random
 
 from . import combat, config, fx, sprites
-from .entities import Crawler, Player
+from .entities import Player, create_enemy
 from .input import InputState
 from .physics import overlap
 from .world import Camera, build_demo_level
@@ -25,7 +25,8 @@ class GameSession:
         """Respawn the player and enemies. World time keeps running."""
         px, py = self.level.player_spawn
         self.player = Player(px, py)
-        self.enemies = [Crawler(x, y, self.rng) for x, y in self.level.enemy_spawns]
+        self.enemies = [create_enemy(kind, x, y, self.rng)
+                        for kind, x, y in self.level.enemy_spawns]
         self.particles = fx.Particles(self.rng)
         self.camera = Camera(config.COLS, self.level.width)
         self.hitstop = combat.HitStop()
@@ -51,9 +52,10 @@ class GameSession:
         p.update(dt, self.level, move_axis, inp.is_held("jump"))
 
         for enemy in self.enemies:
-            enemy.update(dt, self.level)
+            enemy.update(dt, self.level, p)
 
-        # Sword hits, resolved before contact damage.
+        # Sword hits, resolved before contact damage. Enemy state never
+        # prevents damage, so every enemy can be hit during any windup.
         attack_box = combat.attack_hitbox(p)
         if attack_box is not None:
             for enemy in list(self.enemies):
@@ -62,22 +64,18 @@ class GameSession:
                     combat.damage_enemy(enemy, p.facing)
                     self.hitstop.trigger(config.SWORD_HITSTOP)
                     self.shake.trigger(config.HIT_SHAKE)
-                    self.particles.burst(
-                        enemy.x + 1.5, enemy.y + 1.0, 8,
-                        config.HIT_PARTICLE_COLORS,
-                    )
+                    enemy.hit_burst(self.particles)
                     if enemy.hp <= 0:
-                        self.particles.burst(
-                            enemy.x + 1.5, enemy.y + 1.0, 25,
-                            config.DEATH_PARTICLE_COLORS, speed=20.0,
-                        )
+                        enemy.death_burst(self.particles)
                         self.enemies.remove(enemy)
 
-        # Contact damage.
+        # Contact damage. Each type declares which states are dangerous.
         if p.inv <= 0.0:
             for enemy in self.enemies:
-                if overlap(p.rect, enemy.rect):
-                    combat.damage_player(p, enemy.x)
+                if (enemy.contact_damage_enabled
+                        and overlap(p.rect, enemy.rect)):
+                    combat.damage_player(
+                        p, enemy.x, enemy.data["contact_damage"])
                     self.hitstop.trigger(config.HURT_HITSTOP)
                     self.shake.trigger(config.HURT_SHAKE)
                     self.particles.burst(
@@ -117,8 +115,12 @@ class GameSession:
                     renderer.put(sx, sy, char, color)
 
         for enemy in self.enemies:
-            color = config.WHITE if enemy.flash > 0.0 else config.ENEMY_COLOR
+            color = config.WHITE if enemy.flash > 0.0 else enemy.color
             renderer.put_sprite(enemy.sprite(), enemy.x, enemy.y, color, ox)
+            if enemy.telegraph:
+                tx = int(round(enemy.x + enemy.w / 2.0)) - ox
+                ty = int(round(enemy.y)) - 1
+                renderer.put(tx, ty, "!", enemy.data["windup_color"])
 
         if p.inv <= 0.0 or int(p.inv * 20) % 2 == 0:
             renderer.put_sprite(p.sprite(), p.x, p.y, config.PLAYER_COLOR, ox)

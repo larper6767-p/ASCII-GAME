@@ -50,19 +50,7 @@ ATTACK_TOTAL = 0.32            # full swing duration
 ATTACK_REACH = 4               # cells in front of the player
 ATTACK_HEIGHT = 3
 
-# ---------------------------------------------------------------------------
-# Enemies
-# ---------------------------------------------------------------------------
-CRAWLER_W = 3
-CRAWLER_H = 2
-CRAWLER_HP = 3
-CRAWLER_SPEED = 6.0
-CRAWLER_ANIM_FPS = 6.0
-ENEMY_KNOCKBACK_X = 18.0
-ENEMY_KNOCKBACK_Y = -10.0
-ENEMY_STUN_TIME = 0.30
-ENEMY_FLASH_TIME = 0.12
-ENEMY_DECEL_STUN = 30.0
+# Enemy stats are data-driven in ENEMY_DATA at the bottom of this file.
 
 # ---------------------------------------------------------------------------
 # Combat juice
@@ -100,3 +88,57 @@ PLAYER_HURT_PARTICLE_COLORS = ((255, 80, 80), WHITE)
 HUD_HEALTH_COLOR = (255, 120, 120)
 HUD_HELP_COLOR = (110, 110, 130)
 HUD_CLEAR_COLOR = (255, 220, 120)
+
+# ---------------------------------------------------------------------------
+# Enemy types
+# ---------------------------------------------------------------------------
+# Every per-type value an enemy needs. Classes read this dict; add a new
+# type here and map it to a class in entities.ENEMY_CLASSES.
+ENEMY_DATA = {
+    "crawler": {
+        "w": 3,
+        "h": 2,
+        "hp": 3,
+        "speed": 6.0,
+        "contact_damage": 1,
+        "contact_states": ("patrol",),
+        "windup_time": 0.0,
+        "attack_time": 0.0,
+        "recover_time": 0.0,
+        "knockback_x": 18.0,
+        "knockback_y": -10.0,
+        "stun_time": 0.30,
+        "flash_time": 0.12,
+        "stun_decel": 30.0,
+        "anim_fps": 6.0,
+        "color": ENEMY_COLOR,
+    },
+    "flyer": {
+        "w": 5,
+        "h": 2,
+        "hp": 2,
+        "speed": 10.0,
+        "contact_damage": 1,
+        "contact_states": ("dive",),
+        "windup_time": 0.45,
+        "attack_time": 0.55,
+        "recover_time": 0.70,
+        "cooldown": 1.30,
+        "knockback_x": 20.0,
+        "knockback_y": -8.0,
+        "stun_time": 0.30,
+        "flash_time": 0.12,
+        "stun_decel": 28.0,
+        "anim_fps": 8.0,
+        "dive_speed": 32.0,
+        "aggro_x": 24.0,
+        "aggro_y": 14.0,
+        "float_amp_x": 2.0,
+        "float_amp_y": 1.2,
+        "float_freq_x": 0.9,
+        "float_freq_y": 2.0,
+        "color": (195, 120, 230),
+        "windup_color": (255, 225, 90),
+        "attack_color": (255, 150, 80),
+    },
+}
