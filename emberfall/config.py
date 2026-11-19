@@ -169,6 +169,14 @@ TORCH_FLICKER_SPEED = 8.0
 AMBIENT_EMBER_COUNT = 20
 AMBIENT_EMBER_RISE = 0.045     # screen heights per second
 
+# Sealed-room fail-safe. An out-of-bounds or completely inactive enemy is
+# returned to its spawn once; a repeat escape, inactivity timeout or being
+# embedded in geometry for LOCK_STUCK_SECONDS removes it, so a locked arena
+# can never soft-lock on an unreachable enemy.
+LOCK_STUCK_SECONDS = 3.0
+LOCK_IDLE_SECONDS = 20.0
+LOCK_ESCAPE_RETURNS = 1
+
 # HUD: bigger font, brighter colours and a dark panel for contrast.
 HUD_FONT_SIZE = 16
 HUD_PANEL_COLOR = (16, 18, 30, 215)

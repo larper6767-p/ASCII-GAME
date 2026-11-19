@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pygame
 
 from emberfall import config
+from emberfall import physics
 from emberfall.input import InputState
 from emberfall.renderer import Renderer
 from emberfall.rooms import RoomError, load_room, load_room_by_id
@@ -289,6 +290,142 @@ def test_lock_on_enter():
           str(session.transition))
 
 
+def test_sealed_room_failsafe():
+    print("Sealed-arena soft-lock fail-safe:")
+    idle = InputState()
+    session = GameSession(seed=23, room_id="room3")
+    total = len(session.level.enemy_spawns)
+    survivor = session.enemies[0].spawn_index
+    session.room_killed["room3"] = set(range(total)) - {survivor}
+    session.reset()
+    check("fail-safe room starts with one enemy",
+          len(session.enemies) == 1 and session.room_locked)
+
+    enemy = session.enemies[0]
+    _, spawn_x, spawn_y = session.level.enemy_spawns[survivor]
+    enemy.x = -20.0
+    session._sealed_room_failsafe(config.FIXED_DT)
+    check("escaped enemy is returned to its spawn",
+          len(session.enemies) == 1
+          and session.enemies[0].x == spawn_x
+          and session.enemies[0].y == spawn_y,
+          f"{session.enemies[0].x}, {session.enemies[0].y}")
+    check("arena stays locked after one recovery", session.room_locked)
+
+    enemy = session.enemies[0]
+    enemy.x = -20.0
+    session._sealed_room_failsafe(config.FIXED_DT)
+    check("repeat escape removes the enemy", not session.enemies)
+    check("removed enemy is recorded as defeated",
+          survivor in session.room_killed["room3"])
+    check("repeat escape unlocks the arena", not session.room_locked)
+
+    # Embedding an enemy in a wall is unrecoverable: after the threshold it
+    # is removed and counted as defeated so the door can unlock.
+    session = GameSession(seed=24, room_id="room3")
+    total = len(session.level.enemy_spawns)
+    survivor = session.enemies[0].spawn_index
+    session.room_killed["room3"] = set(range(total)) - {survivor}
+    session.reset()
+    enemy = session.enemies[0]
+    enemy.x, enemy.y = 0.0, 0.0
+    steps = int(config.LOCK_STUCK_SECONDS / config.FIXED_DT) + 2
+    for _ in range(steps):
+        session._sealed_room_failsafe(config.FIXED_DT)
+        if not session.enemies:
+            break
+    check("stuck enemy is removed after the threshold", not session.enemies)
+    check("stuck enemy is recorded as defeated",
+          survivor in session.room_killed["room3"])
+    check("stuck removal unlocks the arena", not session.room_locked)
+
+    # A completely inactive enemy in a clear area gets one recovery then is
+    # removed, so a frozen AI cannot seal the doors forever.
+    session = GameSession(seed=27, room_id="room3")
+    total = len(session.level.enemy_spawns)
+    survivor = session.enemies[0].spawn_index
+    session.room_killed["room3"] = set(range(total)) - {survivor}
+    session.reset()
+    session._sealed_room_failsafe(config.LOCK_IDLE_SECONDS + 0.1)
+    check("inactive enemy gets a spawn recovery first",
+          len(session.enemies) == 1)
+    session._sealed_room_failsafe(config.LOCK_IDLE_SECONDS + 0.1)
+    check("inactive enemy is removed on repeat timeout",
+          not session.enemies and not session.room_locked)
+
+    # No soft-lock: with the arena cleared, the door opens normally.
+    session.player.x = 1.0
+    session.player.y = session.level.player_spawn[1]
+    session.update(config.FIXED_DT, idle)
+    check("cleared arena door can start a transition",
+          session.transition is not None
+          and session.transition["dest"] == "room2",
+          str(session.transition))
+
+
+def test_locked_room_reentry():
+    print("Re-entering a cleared locked room:")
+    room = load_room_by_id("room3")
+    total = len(room.enemy_spawns)
+    session = GameSession(seed=25, room_id="room2")
+    session.room_killed["room3"] = set(range(total))
+    session._enter_room("room3", "left")
+    check("re-entry has no enemies", not session.enemies)
+    check("re-entry does not re-lock the cleared arena",
+          session.room_locked is False)
+    check("locked flag still describes the room",
+          session.level.lock_on_enter is True)
+    check("cleared arena arrival is safe",
+          not any(physics.overlap(session.player.rect, enemy.rect)
+                  for enemy in session.enemies)
+          and not physics.collides(
+              session.level, session.player.x, session.player.y,
+              config.PLAYER_W, config.PLAYER_H,
+          ))
+
+
+def test_locked_room_death_reset():
+    print("Dying inside the locked arena:")
+    room = load_room_by_id("room3")
+    total = len(room.enemy_spawns)
+    session = GameSession(seed=26, room_id="room3")
+    killed = {0, 1}
+    session.room_killed["room3"] = set(killed)
+    session.reset()
+    check("arena locks with living enemies", session.room_locked)
+    check("death setup keeps killed enemies dead",
+          len(session.enemies) == total - len(killed))
+
+    session.player.hp = 0
+    session.update(config.FIXED_DT, InputState())
+    check("death inside the arena stays in it", session.room_id == "room3")
+    check("death respawns at full hp",
+          session.player.hp == config.PLAYER_MAX_HP)
+    check("death keeps the arena locked while enemies remain",
+          session.room_locked)
+    check("death respawns only the living enemies",
+          len(session.enemies) == total - len(killed)
+          and all(e.spawn_index not in killed for e in session.enemies))
+    check("living enemies reset to their spawns",
+          all((e.x, e.y) == session.level.enemy_spawns[e.spawn_index][1:]
+              for e in session.enemies))
+    check("death respawn is clear of solids and enemies",
+          not physics.collides(
+              session.level, session.player.x, session.player.y,
+              config.PLAYER_W, config.PLAYER_H,
+          )
+          and not any(physics.overlap(session.player.rect, e.rect)
+                      for e in session.enemies))
+    check("death clears the previous projectiles",
+          not session.projectiles.items)
+
+    # A fully cleared arena stays unlocked through death/reset.
+    session.room_killed["room3"] = set(range(total))
+    session.reset()
+    check("cleared arena is unlocked after reset", not session.room_locked)
+    check("cleared arena has no respawned enemies", not session.enemies)
+
+
 def test_atmosphere_physics_isolation(renderer):
     print("Atmosphere drawing stays out of physics:")
 
@@ -357,6 +494,9 @@ def main():
         test_real_room_metadata()
         test_atmosphere_rendering(renderer)
         test_lock_on_enter()
+        test_sealed_room_failsafe()
+        test_locked_room_reentry()
+        test_locked_room_death_reset()
         test_atmosphere_physics_isolation(renderer)
         test_atmosphere_frame_time(renderer)
     finally:
