@@ -23,6 +23,7 @@ class Player(Body):
         self.weapon = weapon if weapon in config.WEAPON_DATA else "sword"
         self.weapon_switch_t = 0.0
         self.ranged_fired = False
+        self.weapon_cooldown = 0.0
 
     @property
     def attacking(self):
@@ -39,6 +40,8 @@ class Player(Body):
         if weapon != self.weapon:
             self.weapon = weapon
             self.weapon_switch_t = config.WEAPON_SWITCH_TIME
+        # A form change should not inherit another form's fire cooldown.
+        self.weapon_cooldown = 0.0
         return True
 
     def start_attack(self, pogo=False):
@@ -46,8 +49,11 @@ class Player(Body):
 
         Only the sword can pogo. Bow and gun attacks always fire in the
         facing direction and use the same startup/active/recovery cadence.
+        Ranged forms also respect their tunable fire cooldown.
         """
         if self.stun > 0.0 or self.attacking:
+            return False
+        if self.weapon_cooldown > 0.0:
             return False
         self.attack_t = 0.0
         self.pogo = bool(
@@ -68,6 +74,7 @@ class Player(Body):
         self.stun -= dt
         self.anim += dt
         self.weapon_switch_t = max(0.0, self.weapon_switch_t - dt)
+        self.weapon_cooldown = max(0.0, self.weapon_cooldown - dt)
 
         if self.stun <= 0.0:
             if move_axis and not self.attacking:
@@ -108,7 +115,10 @@ class Player(Body):
 
         if self.attacking:
             self.attack_t += dt
-            if self.attack_t >= config.ATTACK_TOTAL:
+            attack_total = self.weapon_data.get(
+                "attack_total", config.ATTACK_TOTAL
+            )
+            if self.attack_t >= attack_total:
                 self.attack_t = -1.0
                 self.pogo = False
 

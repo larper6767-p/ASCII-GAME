@@ -897,9 +897,10 @@ class Renderer:
                 color = config.PLAYER_SLIME_BODY
                 if distance > 0.60:
                     char = "▓"
-                    color = config.PLAYER_SLIME_EDGE
+                    # A bright rim keeps the black body readable in dark rooms.
+                    color = config.PLAYER_SLIME_RIM
                 if distance > 0.78 and v > 0.15:
-                    color = (config.PLAYER_SLIME_RIM if v > 0.50
+                    color = (config.PLAYER_SLIME_RIM if v > 0.20
                              else config.PLAYER_SLIME_EDGE)
                 if distance < 0.24 and v > 0.0:
                     color = config.PLAYER_SLIME_INNER
@@ -908,7 +909,7 @@ class Renderer:
                     color = config.PLAYER_SLIME_EDGE
                 self._put_local(
                     char, col, row, base_x, base_y, color,
-                    glow=(distance > 0.78 and v > 0.50),
+                    glow=(distance > 0.70),
                 )
 
         # Two eyes on the leading half. Shifting both with facing makes the

@@ -222,6 +222,21 @@ def test_attack_and_pogo():
               session.player.attacking and session.player.pogo)
 
 
+def test_jump_with_weapon_keys():
+    print("Jump with default weapon keys:")
+    session = settled_session()
+    keyboard = KeyboardInput()
+    keyboard.handle_events([
+        key_event(pygame.KEYDOWN, pygame.K_k),
+        key_event(pygame.KEYDOWN, pygame.K_2),
+    ])
+    session.update(config.FIXED_DT, keyboard)
+    check("jump still fires with a weapon key held",
+          session.player.vy < -5.0, f"vy={session.player.vy:.2f}")
+    check("weapon key is consumed as a form switch",
+          session.player.weapon == "bow", session.player.weapon)
+
+
 def test_f4_debug_overlay():
     print("F4 raw input overlay:")
     renderer = Renderer()
@@ -268,6 +283,7 @@ def main():
     test_custom_keybinds()
     test_alternating_jump_keys()
     test_attack_and_pogo()
+    test_jump_with_weapon_keys()
     test_f4_debug_overlay()
     print(f"\n{CHECKS} checks, {len(FAILURES)} failures")
     for failure in FAILURES:

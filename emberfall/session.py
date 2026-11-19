@@ -376,7 +376,10 @@ class GameSession:
             for enemy in list(self.enemies):
                 if enemy not in p.hit_set and overlap(attack_box, enemy.rect):
                     p.hit_set.add(enemy)
-                    self._hit_enemy(enemy, p.facing, pogo=p.pogo)
+                    self._hit_enemy(
+                        enemy, p.facing, pogo=p.pogo,
+                        damage=p.weapon_data.get("damage", 1),
+                    )
 
         # Moving shots never interact with the sword. Friendly shots are
         # resolved against enemies; hostile shots can only hurt the player.
@@ -423,6 +426,7 @@ class GameSession:
         x = player.x + player.w + 0.1 if direction > 0 else player.x - 1.1
         y = player.y + player.h / 2.0 - 0.5
         player.ranged_fired = True
+        player.weapon_cooldown = data.get("fire_cooldown", 0.0)
         self.projectiles.spawn(
             x, y,
             data["projectile_speed"] * direction, 0.0,

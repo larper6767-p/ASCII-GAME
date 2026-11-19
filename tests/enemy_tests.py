@@ -279,7 +279,7 @@ def flyer_hit_test():
     flyer = Flyer(p.x + 3.2, p.y, s.rng)
     s.enemies = [flyer]
     hp_sequence = []
-    for _ in range(2):
+    for _ in range(1):
         while p.attacking:
             advance(s, inp, 1)
         flyer.x, flyer.y = p.x + 3.2, p.y
@@ -293,7 +293,7 @@ def flyer_hit_test():
                 break
         hp_sequence.append(flyer.hp)
         advance(s, inp, 20)
-    ok &= check("flyer dies in 2 hits", hp_sequence == [1, 0] and not s.enemies,
+    ok &= check("flyer dies in 1 sword hit", hp_sequence == [0] and not s.enemies,
                 str(hp_sequence))
     return ok
 

@@ -22,6 +22,7 @@ from emberfall.entities import Crawler, Player
 from emberfall.input import InputState, KeyboardInput
 from emberfall.projectiles import ProjectileSystem
 from emberfall.renderer import Renderer
+from emberfall.boss import BossState
 from emberfall.session import GameSession
 from emberfall.world import Level
 
@@ -84,12 +85,11 @@ def test_forms_and_switching():
     ok &= check("form cannot change mid-swing",
                 session.player.weapon == "bow",
                 session.player.weapon)
-    for _ in range(30):
+    inp.set_held(set())
+    for _ in range(80):
         advance(session, inp, 1)
         if not session.player.attacking:
             break
-    inp.set_held(set())
-    advance(session, inp, 1)
     inp.set_held({"weapon_sword"})
     advance(session, inp, 1)
     ok &= check("1 key returns to sword",
@@ -321,6 +321,78 @@ def test_physics_driven_body():
     return ok
 
 
+def test_stun_and_pogo():
+    print("Stun and pogo by form:")
+    ok = True
+    for weapon in config.WEAPON_DATA:
+        player = Player(5.0, 9.0, weapon=weapon)
+        player.stun = 0.2
+        ok &= check(f"stun blocks {weapon} attack",
+                    not player.start_attack(), weapon)
+    ranged = Player(5.0, 5.0, weapon="gun")
+    ranged.on_ground = False
+    ranged.start_attack(True)
+    ok &= check("gun does not pogo", not ranged.pogo)
+    return ok
+
+
+def test_friendly_projectile_vs_boss_intro():
+    print("Friendly projectile vs boss invulnerable intro:")
+    session = GameSession(seed=7, room_id="room3")
+    boss = session.enemies[0]
+    boss.set_state(BossState.INTRO, boss.data["intro_time"])
+    player = session.player
+    player.inv = 999.0
+    player.x = 68.0
+    player.facing = 1
+    player.weapon = "bow"
+    player.start_attack()
+    inp = InputState()
+    for _ in range(20):
+        advance(session, inp, 1)
+        if session.projectiles.items:
+            break
+    hp_before = boss.hp
+    for _ in range(20):
+        advance(session, inp, 1)
+    ok = True
+    ok &= check("boss intro stays invulnerable to friendly fire",
+                boss.hp == hp_before, f"hp={boss.hp}")
+    ok &= check("friendly projectile is consumed during the intro",
+                not session.projectiles.items,
+                str(len(session.projectiles.items)))
+    return ok
+
+
+def test_projectiles_cleared_on_room_change():
+    print("Projectiles cleared on room change:")
+    session = GameSession(seed=5, room_id="room1")
+    inp = InputState()
+    player = session.player
+    player.weapon = "bow"
+    player.start_attack()
+    for _ in range(20):
+        advance(session, inp, 1)
+        if session.projectiles.items:
+            break
+    ok = check("friendly projectile exists before transition",
+               bool(session.projectiles.items),
+               str(len(session.projectiles.items)))
+    player.x = session.level.width - 2.0
+    player.y = session.level.player_spawn[1]
+    for _ in range(45):
+        session.update(config.FIXED_DT, inp)
+        inp.clear_edges()
+        if session.transition is None:
+            break
+    ok &= check("room change completes",
+                session.room_id == "room2", str(session.room_id))
+    ok &= check("friendly projectiles are cleared on arrival",
+                not session.projectiles.items,
+                str(len(session.projectiles.items)))
+    return ok
+
+
 def test_hud_form_label():
     print("HUD form label:")
     renderer = Renderer()
@@ -340,6 +412,9 @@ def main():
     test_ranged_attacks()
     test_renderer_art()
     test_physics_driven_body()
+    test_stun_and_pogo()
+    test_friendly_projectile_vs_boss_intro()
+    test_projectiles_cleared_on_room_change()
     test_hud_form_label()
     print(f"\n{CHECKS} checks, {len(FAILURES)} failures")
     for failure in FAILURES:

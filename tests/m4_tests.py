@@ -435,7 +435,7 @@ def pogo_tests():
     )
     ok &= check(
         "pogo hits the enemy below",
-        crawler.hp == crawler.max_hp - 1,
+        crawler.hp == crawler.max_hp - 2,
         f"hp={crawler.hp}",
     )
     hitbox = combat.attack_hitbox(player)

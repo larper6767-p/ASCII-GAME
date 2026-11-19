@@ -100,13 +100,22 @@ POGO_BOUNCE_SPEED = 22.0       # upward velocity after a downward hit
 # existing melee timing and reach; bow/gun fire friendly projectiles on the
 # normal attack cadence. All numbers are tunable data, not art constants.
 WEAPON_SWITCH_TIME = 0.18
+# Tunable form data. Sword is the baseline melee form; bow/gun trade raw
+# damage and fire cadence for range, with an extra cooldown on top of the
+# attack recovery.
 WEAPON_DATA = {
     "sword": {
         "label": "SWORD",
+        "damage": 2,
+        "attack_total": 0.32,
+        "fire_cooldown": 0.0,
         "projectile": None,
     },
     "bow": {
         "label": "BOW",
+        "damage": 1,
+        "attack_total": 0.65,
+        "fire_cooldown": 0.40,
         "projectile": "arrow",
         "projectile_speed": 26.0,
         "projectile_lifetime": 4.0,
@@ -116,6 +125,9 @@ WEAPON_DATA = {
     },
     "gun": {
         "label": "GUN",
+        "damage": 1,
+        "attack_total": 0.50,
+        "fire_cooldown": 0.30,
         "projectile": "bullet",
         "projectile_speed": 44.0,
         "projectile_lifetime": 2.5,

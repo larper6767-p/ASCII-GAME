@@ -141,14 +141,14 @@ def mechanics():
     advance(s, inp, 1)
     ok &= check("stun blocks attack", not s.player.attacking)
 
-    # Three hits kill, with contact damage disabled for the test.
+    # Two 2-damage sword hits kill, with contact damage disabled for the test.
     s, inp = settled_session()
     p = s.player
     p.inv = 999.0
     enemy = Crawler(p.x + 3.2, p.y, s.rng)
     s.enemies = [enemy]
     hp_sequence = []
-    for swing in range(3):
+    for swing in range(2):
         while p.attacking:
             advance(s, inp, 1)
         enemy.x, enemy.y = p.x + 3.2, p.y
@@ -164,7 +164,7 @@ def mechanics():
                 break
         hp_sequence.append(enemy.hp)
         advance(s, inp, 20)
-    ok &= check("crawler dies in 3 hits", hp_sequence == [2, 1, 0] and not s.enemies,
+    ok &= check("crawler dies in 2 sword hits", hp_sequence == [1, -1] and not s.enemies,
                 str(hp_sequence))
 
     # Contact damage, knockback, i-frames.
