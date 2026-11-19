@@ -1,4 +1,4 @@
-"""Generate the three M5 test rooms as text files.
+"""Generate the three M5/M6 test rooms as text files.
 
 Run from the repo root:
 
@@ -11,7 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "assets" / "rooms"
 
 
-def build(w, h, platforms, enemies, doors, spawns, seed=7):
+def build(w, h, platforms, enemies, doors, spawns, torches=(), extra_meta=(),
+          seed=7):
     rng = random.Random(seed)
     g = [["."] * w for _ in range(h)]
     # Floor and side walls.
@@ -28,8 +29,12 @@ def build(w, h, platforms, enemies, doors, spawns, seed=7):
                 g[y][x + i] = "="
                 if y - 1 >= 0 and rng.random() < 0.45:
                     g[y - 1][x + i] = '"'
+    # Torches: non-solid, drawn as flickering flames and light sources.
+    for x, y in torches:
+        if 0 <= x < w and 0 <= y < h and g[y][x] not in "#=":
+            g[y][x] = "T"
     lines = ["".join(row) for row in g]
-    meta = []
+    meta = list(extra_meta)
     for x, y in spawns:
         meta.append(f"spawn {x} {y}")
     for kind, x, y in enemies:
@@ -53,6 +58,14 @@ def main():
                      ("flyer", 84, 13), ("spitter", 100, 22)],
             doors=[("right", "room2", "left")],
             spawns=[(4, 22)],
+            torches=[(10, 24), (25, 16), (34, 24), (57, 24),
+                     (83, 16), (88, 24), (112, 24)],
+            extra_meta=[
+                "atmosphere dusk",
+                "palette #191426 #8a7a72 #ffb15e",
+                "fog 0.85",
+                "ember #ff8a4c",
+            ],
             seed=1,
         ),
         "room2": build(
@@ -66,6 +79,14 @@ def main():
                      ("flyer", 100, 13), ("spitter", 116, 22)],
             doors=[("left", "room1", "right"), ("right", "room3", "left")],
             spawns=[(4, 22)],
+            torches=[(9, 24), (23, 15), (34, 24), (62, 24),
+                     (84, 16), (90, 24), (120, 24)],
+            extra_meta=[
+                "atmosphere ruins",
+                "palette #0e1524 #6c7f9a #8fe0ff",
+                "fog 1.0",
+                "ember #9fd7ff",
+            ],
             seed=2,
         ),
         "room3": build(
@@ -78,6 +99,16 @@ def main():
                      ("flyer", 84, 13), ("spitter", 98, 22)],
             doors=[("left", "room2", "right")],
             spawns=[(4, 22)],
+            torches=[(9, 24), (21, 16), (31, 24), (56, 24),
+                     (82, 16), (86, 24), (102, 24)],
+            extra_meta=[
+                "atmosphere emberfall",
+                "palette #1c0f18 #9a5a4a #ff6a3c",
+                "fog 0.6",
+                "ember #ff5a3c",
+                # Boss arena: doors stay sealed until every enemy is dead.
+                "lock_on_enter",
+            ],
             seed=3,
         ),
     }
@@ -91,12 +122,19 @@ def main():
 #   =   platform
 #   \"   decorative grass (on top of solid ground)
 #   .   empty air
+#   T   torch / fire (non-solid, emits flickering light)
 #
 # Metadata (after a line containing only ---):
 #   spawn X Y
 #   enemy <type> X Y     (type: crawler, flyer, spitter)
 #   door <side> <dest_room> <dest_spawn_side>
 #       side / dest_spawn_side: left, right, top, bottom
+#   atmosphere <name>    (label for the room mood)
+#   palette <sky> <rock> <accent>
+#       three #rrggbb colours: sky fill, terrain tint, torch/accent glow
+#   fog <0.0..1.0>       (fog density; 0 disables the bank and strips)
+#   ember <#rrggbb>      (ambient ember mote colour)
+#   lock_on_enter        (seal every door until the room is cleared)
 """
     (OUT / "legend.txt").write_text(legend, encoding="utf-8")
     print(f"wrote {OUT / 'legend.txt'}")

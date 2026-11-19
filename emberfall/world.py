@@ -5,8 +5,9 @@ from . import config
 class Level:
     """A rectangular tile grid plus spawn metadata.
 
-    Tile meaning: '#'/'=' solid, '"' decorative grass, '.'/' ' empty.
-    Rooms loaded from ``assets/rooms/*.txt`` subclass this with door data.
+    Tile meaning: '#'/'=' solid, '"' decorative grass, 'T' torch/fire,
+    '.'/' ' empty. Rooms loaded from ``assets/rooms/*.txt`` subclass this
+    with door, atmosphere and lock data.
     """
 
     def __init__(self, tiles, enemy_spawns, player_spawn):

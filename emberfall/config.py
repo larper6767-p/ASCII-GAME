@@ -137,6 +137,38 @@ HIT_PARTICLE_COLORS = (WHITE, (255, 220, 120))
 DEATH_PARTICLE_COLORS = ((255, 90, 70), (255, 180, 80), WHITE)
 PLAYER_HURT_PARTICLE_COLORS = ((255, 80, 80), WHITE)
 
+# ---------------------------------------------------------------------------
+# Room atmosphere (M6) - purely visual, set from room metadata
+# ---------------------------------------------------------------------------
+# Neutral defaults for levels without atmosphere metadata (the demo level).
+# ATMO_SKY matches BG, so the sky is unchanged; the subtle rock tint keeps
+# the default palette in the same cool family as the original renderer.
+ATMO_SKY = BG
+ATMO_ROCK = (170, 166, 196)
+ATMO_ACCENT = (255, 176, 96)
+ATMO_FOG = 1.0
+ATMO_EMBER = (255, 138, 74)
+
+
+def default_atmosphere():
+    """Return a fresh default atmosphere dict for a room or renderer."""
+    return {
+        "name": "default",
+        "sky": ATMO_SKY,
+        "rock": ATMO_ROCK,
+        "accent": ATMO_ACCENT,
+        "fog": ATMO_FOG,
+        "ember": ATMO_EMBER,
+    }
+
+
+# Flickering torch/fire tiles ('T' in room files) and ambient ember motes.
+TORCH_LIGHT_RADIUS = 3.2       # physics cells
+TORCH_LIGHT_STRENGTH = 1.0
+TORCH_FLICKER_SPEED = 8.0
+AMBIENT_EMBER_COUNT = 20
+AMBIENT_EMBER_RISE = 0.045     # screen heights per second
+
 # HUD: bigger font, brighter colours and a dark panel for contrast.
 HUD_FONT_SIZE = 16
 HUD_PANEL_COLOR = (16, 18, 30, 215)
