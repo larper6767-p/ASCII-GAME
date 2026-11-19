@@ -223,11 +223,11 @@ def test_atmosphere_rendering(renderer):
           f"{cache_growth} new surfaces")
 
     # Re-applying the same room must not rebuild the parallax layers.
-    surface_id = id(renderer.parallax.layers[0][1])
+    builds = renderer.parallax.build_count
     session.draw(renderer)
     renderer.flip()
     check("same room does not rebuild parallax",
-          id(renderer.parallax.layers[0][1]) == surface_id)
+          renderer.parallax.build_count == builds)
 
     # Entering another room re-tints everything once.
     session._enter_room("room2", "left")
@@ -237,7 +237,8 @@ def test_atmosphere_rendering(renderer):
           renderer._atmosphere["name"] == "ruins",
           renderer._atmosphere["name"])
     check("room change rebuilds parallax",
-          id(renderer.parallax.layers[0][1]) != surface_id)
+          renderer.parallax.build_count == builds + 1,
+          f"{builds} -> {renderer.parallax.build_count}")
     check("room change keeps physics untouched",
           session.room_id == "room2" and session.player.hp > 0)
 

@@ -43,6 +43,7 @@ class Parallax:
         self.last_offsets = []
         self.atmosphere = None
         self.atmosphere_key = None
+        self.build_count = 0
         self.set_atmosphere(None)
 
     # ------------------------------------------------------------------
@@ -70,6 +71,7 @@ class Parallax:
         self.fog_overlay = None
         self.last_offsets.clear()
         self._build()
+        self.build_count += 1
 
     # ------------------------------------------------------------------
     def _new_layer(self, factor, depth):

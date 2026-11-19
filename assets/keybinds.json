@@ -1,0 +1,8 @@
+{
+  "left": ["a", "left"],
+  "right": ["d", "right"],
+  "down": ["s", "down"],
+  "jump": ["space", "w", "z", "up", "k"],
+  "attack": ["j"],
+  "restart": ["r"]
+}
