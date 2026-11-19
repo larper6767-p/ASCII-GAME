@@ -3,7 +3,13 @@ from . import config
 
 
 def attack_hitbox(player):
-    """Return the sword AABB in world cells, or None when inactive."""
+    """Return the sword AABB in world cells, or None when inactive.
+
+    Bow and gun forms deal damage through friendly projectiles instead, so
+    they intentionally expose no melee hitbox.
+    """
+    if getattr(player, "weapon", "sword") != "sword":
+        return None
     if not (config.ATTACK_STARTUP <= player.attack_t < config.ATTACK_ACTIVE_END):
         return None
     if player.pogo:
@@ -15,9 +21,9 @@ def attack_hitbox(player):
     return (bx, player.y, config.ATTACK_REACH, config.ATTACK_HEIGHT)
 
 
-def damage_enemy(enemy, direction):
-    """Apply one sword hit. Caller handles FX and death removal."""
-    enemy.take_hit(direction)
+def damage_enemy(enemy, direction, damage=1):
+    """Apply a hit. Caller handles FX and death removal."""
+    enemy.take_hit(direction, damage)
 
 
 def damage_player(player, source_x, damage=1):

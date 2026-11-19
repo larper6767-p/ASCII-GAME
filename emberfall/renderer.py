@@ -132,6 +132,14 @@ class Renderer:
         }
         self._ox = 0
 
+        # Player-only visual state. These timers never feed physics; they
+        # let the slime squash on landing and stretch when it leaves the
+        # ground even though the simulation only stores velocity/on_ground.
+        self._player_was_air = False
+        self._player_land_anim = 0.0
+        self._player_jump_anim = 0.0
+        self._player_last_time = None
+
         # F3 debug overlay: real frame time (set by the engine each frame)
         # plus the per-step costs collected while the overlay is enabled.
         # F4 shows raw input and latched edges for diagnosing keyboard
@@ -232,6 +240,7 @@ class Renderer:
         on_ground = bool(getattr(player, "on_ground", False))
         coyote = getattr(player, "coyote", 0.0) or 0.0
         vy = getattr(player, "vy", 0.0) or 0.0
+        form = getattr(player, "weapon", "sword")
         self.input_debug_lines = (
             "F4 INPUT DEBUG",
             f"raw keys: {raw_text}",
@@ -240,7 +249,8 @@ class Renderer:
              f"attack={'YES' if 'attack' in edges else 'no'}"),
             (f"jump buffer: {'SET' if jump_buf > 0.0 else 'empty'} "
              f"({jump_buf:.3f}s)"),
-            (f"ground: {'YES' if on_ground else 'no'}  "
+            (f"form: {form.upper()}  ground: "
+             f"{'YES' if on_ground else 'no'}  "
              f"coyote {coyote:.2f}s  vy {vy:.1f}"),
         )
 
@@ -581,7 +591,7 @@ class Renderer:
                     (player.y + player.h / 2.0) * self.sub,
                     config.LIGHT_PLAYER_RADIUS * self.sub,
                     config.LIGHT_PLAYER_STRENGTH,
-                    (255, 229, 177),
+                    config.PLAYER_LIGHT_COLOR,
                 )
             for projectile in projectiles.items:
                 self.light_layer.add_light(
@@ -799,30 +809,423 @@ class Renderer:
                         self.cw * 2.4, enemy.data["windup_color"], 0.9,
                     )
 
+    def _put_local(self, char, gx, gy, base_x, base_y, color, glow=False):
+        """Place one glyph in the player-local grid.
+
+        ``base_x`` is the centre of the physics body and ``base_y`` is the
+        pixel at its feet. ``gy=0`` is the cell directly above the floor, so
+        the body, eyes and morphing weapons all share one anchor.
+        """
+        if char == " ":
+            return
+        px = base_x + int(round(gx)) * self.cw
+        py = base_y - (int(round(gy)) + 1) * self.ch
+        self._fg_batch.append((self.glyphs.surface(char, color), (px, py)))
+        self.stats["sprite_cells"] += 1
+        if glow:
+            self.bloom.add(
+                px + self.cw // 2, py + self.ch // 2,
+                self.cw * 1.45, color, 0.58,
+            )
+
+    def _draw_slime_body(self, player, base_x, base_y):
+        """A rounded, velocity-driven black slime with two glowing eyes."""
+        speed = min(1.0, abs(player.vx) / config.RUN_SPEED)
+        land = min(1.0, self._player_land_anim / 0.14)
+        jump = min(1.0, self._player_jump_anim / 0.14)
+        rx = 3.0 + 0.55 * speed
+        ry = 2.9 - 0.18 * speed
+        if not player.on_ground:
+            if player.vy < 0.0:
+                rx -= 0.20
+                ry += 0.55
+            else:
+                rx -= 0.32
+                ry += 0.75
+        if land > 0.0:
+            rx *= 1.0 + 0.45 * land
+            ry *= 1.0 - 0.32 * land
+        if jump > 0.0:
+            rx *= 1.0 - 0.10 * jump
+            ry *= 1.0 + 0.22 * jump
+        if player.attacking:
+            if player.weapon == "sword":
+                rx += 0.50
+                ry -= 0.12
+            elif player.weapon == "bow":
+                ry += 0.18
+            else:
+                rx += 0.20
+        if player.weapon_switch_t > 0.0:
+            morph = min(1.0, player.weapon_switch_t
+                        / max(config.WEAPON_SWITCH_TIME, 1e-6))
+            rx *= 1.0 + 0.30 * morph
+            ry *= 1.0 - 0.18 * morph
+        rx = max(2.2, rx)
+        ry = max(2.2, ry)
+        lean = max(-0.65, min(0.65, player.vx / config.RUN_SPEED * 0.55))
+        if player.attacking:
+            lean += player.facing * 0.35
+        body_cy = ry
+        body_cx = lean
+
+        # A short, dim tail sells horizontal momentum without adding any
+        # simulation state.
+        if speed > 0.35:
+            back = -player.facing
+            for index, (gx, gy) in enumerate((
+                (body_cx + back * (rx + 0.35), 0.9),
+                (body_cx + back * (rx + 0.85), 0.35),
+            )):
+                self._put_local(
+                    "░" if index else "▒", gx, gy, base_x, base_y,
+                    config.PLAYER_SLIME_EDGE,
+                )
+
+        max_col = int(math.ceil(rx)) + 1
+        max_row = int(math.ceil(ry * 2.0)) + 1
+        for row in range(max(1, max_row)):
+            v = ((row + 0.5) - body_cy) / ry
+            if abs(v) > 1.0:
+                continue
+            for col in range(-max_col, max_col + 1):
+                u = ((col + 0.5) - body_cx) / rx
+                distance = u * u + v * v
+                if distance > 1.0:
+                    continue
+                char = "█"
+                color = config.PLAYER_SLIME_BODY
+                if distance > 0.60:
+                    char = "▓"
+                    color = config.PLAYER_SLIME_EDGE
+                if distance > 0.78 and v > 0.15:
+                    color = (config.PLAYER_SLIME_RIM if v > 0.50
+                             else config.PLAYER_SLIME_EDGE)
+                if distance < 0.24 and v > 0.0:
+                    color = config.PLAYER_SLIME_INNER
+                if v > 0.32 and -0.60 < u < 0.15 and distance > 0.32:
+                    char = "▒"
+                    color = config.PLAYER_SLIME_EDGE
+                self._put_local(
+                    char, col, row, base_x, base_y, color,
+                    glow=(distance > 0.78 and v > 0.50),
+                )
+
+        # Two eyes on the leading half. Shifting both with facing makes the
+        # blob look like it is looking where it moves.
+        eye_row = int(round(body_cy + ry * 0.28))
+        eye_a = body_cx + player.facing * 0.45
+        eye_b = body_cx + player.facing * 1.85
+        for eye_x in (eye_a, eye_b):
+            self._put_local(
+                "o", eye_x, eye_row, base_x, base_y,
+                config.PLAYER_SLIME_EYE, glow=True,
+            )
+
+        # Wet highlights and a floor-facing drip.
+        self._put_local(
+            "'", body_cx - player.facing * 1.2,
+            max(1, int(round(body_cy + ry * 0.55))),
+            base_x, base_y, config.PLAYER_SLIME_GLINT,
+        )
+        self._put_local(
+            "▄", body_cx - player.facing * (rx * 0.75), 0,
+            base_x, base_y, config.PLAYER_SLIME_EDGE,
+        )
+
+    def _draw_slime_sword(self, player, base_x, base_y):
+        """A long blade grown out of the slime, with a readable sweep."""
+        direction = 1 if player.facing > 0 else -1
+        if player.pogo and player.attacking:
+            angle = -88.0
+        elif player.attacking:
+            t = player.attack_t
+            if t < config.ATTACK_STARTUP:
+                p = min(1.0, t / max(config.ATTACK_STARTUP, 1e-6))
+                angle = 60.0 + 18.0 * p
+            elif t < config.ATTACK_ACTIVE_END:
+                p = ((t - config.ATTACK_STARTUP)
+                     / max(config.ATTACK_ACTIVE_END - config.ATTACK_STARTUP,
+                           1e-6))
+                angle = 78.0 - 92.0 * p
+            else:
+                p = ((t - config.ATTACK_ACTIVE_END)
+                     / max(config.ATTACK_TOTAL - config.ATTACK_ACTIVE_END,
+                           1e-6))
+                angle = -14.0 + 70.0 * p
+        else:
+            angle = 55.0
+        rad = math.radians(angle)
+        hilt_x = direction * 2.0
+        hilt_y = 3.1
+        length = 8.2
+        tip_x = hilt_x + direction * math.cos(rad) * length
+        tip_y = hilt_y + math.sin(rad) * length
+
+        # The arm is a continuation of the blob, not a separate held prop.
+        for step in range(3):
+            self._put_local(
+                "█" if step == 0 else "▓",
+                direction * (0.65 + step * 0.42),
+                2.65 + step * 0.15,
+                base_x, base_y, config.PLAYER_SLIME_EDGE,
+            )
+
+        # Handle and pommel sit just inside the blob's leading edge.
+        for step in range(1, 4):
+            self._put_local(
+                "▓", hilt_x - direction * (step * 0.45),
+                hilt_y - step * 0.10,
+                base_x, base_y, config.PLAYER_SLIME_EDGE,
+            )
+        self._put_local(
+            "o", hilt_x - direction * 1.85, hilt_y - 0.40,
+            base_x, base_y, config.PLAYER_SLIME_RIM, glow=True,
+        )
+
+        # Perpendicular crossguard.
+        guard_x = -math.sin(rad) * direction
+        guard_y = math.cos(rad)
+        for offset in (-1.15, 0.0, 1.15):
+            self._put_local(
+                "═" if abs(guard_y) < 0.60 else "║",
+                hilt_x + guard_x * offset,
+                hilt_y + guard_y * offset,
+                base_x, base_y, config.PLAYER_SWORD_EDGE,
+            )
+
+        # A bright edge and darker steel core sampled along the blade length.
+        samples = 16
+        for index in range(1, samples + 1):
+            u = index / samples
+            gx = hilt_x + (tip_x - hilt_x) * u
+            gy = hilt_y + (tip_y - hilt_y) * u
+            if u > 0.93:
+                if abs(tip_y - hilt_y) > abs(tip_x - hilt_x):
+                    char = "v" if tip_y < hilt_y else "^"
+                else:
+                    char = ">" if direction > 0 else "<"
+                color = config.PLAYER_SWORD_GLINT
+            else:
+                char = "█" if index % 2 else "▓"
+                color = (config.PLAYER_SWORD_STEEL if u < 0.64
+                         else config.PLAYER_SWORD_EDGE)
+            self._put_local(
+                char, gx, gy, base_x, base_y, color,
+                glow=(u > 0.88),
+            )
+            if index in (5, 9, 12):
+                self._put_local(
+                    "+" if index != 9 else "*",
+                    gx + guard_x * 0.62, gy + guard_y * 0.62,
+                    base_x, base_y, config.PLAYER_SWORD_GLINT,
+                )
+
+        tip_px = base_x + int(round(tip_x)) * self.cw + self.cw // 2
+        tip_py = base_y - (int(round(tip_y)) + 1) * self.ch + self.ch // 2
+        self.bloom.add(
+            tip_px, tip_py, self.cw * 2.0,
+            config.PLAYER_SWORD_EDGE, 0.58,
+        )
+
+    def _draw_slime_bow(self, player, base_x, base_y):
+        """A curved limb and drawn string grown from the slime."""
+        direction = 1 if player.facing > 0 else -1
+        cx = direction * 2.0
+        cy = 3.35
+
+        for step in range(3):
+            self._put_local(
+                "█" if step == 0 else "▓",
+                direction * (0.70 + step * 0.40), cy - 0.15,
+                base_x, base_y, config.PLAYER_SLIME_EDGE,
+            )
+
+        for dy in range(-3, 4):
+            bulge = 0.95 * (1.0 - (abs(dy) / 3.4) ** 1.7)
+            self._put_local(
+                "▓" if abs(dy) < 3 else "▄",
+                cx + direction * (0.55 + bulge), cy + dy,
+                base_x, base_y,
+                (config.PLAYER_BOW_LIMB if abs(dy) < 3
+                 else config.PLAYER_SLIME_EDGE),
+            )
+
+        string_x = cx + direction * 0.25
+        pull = 0.0
+        if player.attacking and player.attack_t < config.ATTACK_STARTUP:
+            pull = min(1.0, player.attack_t / max(config.ATTACK_STARTUP, 1e-6))
+            string_x -= direction * 0.55 * pull
+        for dy in range(-3, 4):
+            self._put_local(
+                "|", string_x, cy + dy, base_x, base_y,
+                config.PLAYER_BOW_STRING,
+            )
+
+        # Nocked arrow; after the active frame the actual projectile is
+        # drawn by draw_projectiles instead.
+        if not (player.attacking and player.ranged_fired):
+            arrow_y = cy
+            for step in range(2):
+                self._put_local(
+                    "-", string_x + direction * (0.55 + step * 0.60),
+                    arrow_y, base_x, base_y,
+                    config.PLAYER_BOW_STRING,
+                )
+            self._put_local(
+                ">" if direction > 0 else "<",
+                string_x + direction * 1.85, arrow_y, base_x, base_y,
+                config.PLAYER_SLIME_EYE, glow=True,
+            )
+        self.bloom.add(
+            base_x + int(round(cx)) * self.cw + self.cw // 2,
+            base_y - (int(round(cy + 3)) + 1) * self.ch + self.ch // 2,
+            self.cw * 1.8, config.PLAYER_BOW_LIMB, 0.45,
+        )
+
+    def _draw_slime_gun(self, player, base_x, base_y):
+        """A chunky, low-slung barrel with a glowing muzzle core."""
+        direction = 1 if player.facing > 0 else -1
+        recoil = 0.0
+        if (player.attacking
+                and player.attack_t < config.ATTACK_ACTIVE_END + 0.06):
+            recoil = -direction * 0.85
+        gx0 = direction * 1.55 + recoil
+        gy = 2.0
+
+        # Shoulder/arm blend.
+        for step in range(3):
+            self._put_local(
+                "█" if step == 0 else "▓",
+                direction * (0.65 + step * 0.38), gy + 0.15,
+                base_x, base_y, config.PLAYER_SLIME_EDGE,
+            )
+        # Grip.
+        for step in range(2):
+            self._put_local(
+                "▓", gx0 - direction * 0.20 + direction * step * 0.35,
+                gy - 0.55 - step * 0.45,
+                base_x, base_y, config.PLAYER_SLIME_EDGE,
+            )
+        # Barrel body and top rail.
+        for index in range(5):
+            x = gx0 + direction * (index * 0.82)
+            self._put_local(
+                "█" if index < 4 else "▓", x, gy,
+                base_x, base_y, config.PLAYER_GUN_BODY,
+            )
+            if index < 3:
+                self._put_local(
+                    "─", x, gy + 0.85, base_x, base_y,
+                    config.PLAYER_GUN_EDGE,
+                )
+        self._put_local(
+            "o", gx0 - direction * 0.45, gy, base_x, base_y,
+            config.PLAYER_GUN_CORE, glow=True,
+        )
+        muzzle_x = gx0 + direction * 3.5
+        if (player.attacking
+                and config.ATTACK_STARTUP <= player.attack_t
+                < config.ATTACK_ACTIVE_END + 0.08):
+            self._put_local(
+                "*", muzzle_x + direction * 0.45, gy, base_x, base_y,
+                config.PLAYER_GUN_CORE, glow=True,
+            )
+            self._put_local(
+                "+", muzzle_x + direction * 0.45, gy + 0.85,
+                base_x, base_y, config.PLAYER_GUN_EDGE,
+            )
+
     def draw_player(self, player, camera_offset, time):
         with self._phase("sprites"):
+            # Visual-only landing/jump timers. Frame time can pause during
+            # hit-stop; clamp it so the squash never runs away.
+            dt = 0.0
+            if self._player_last_time is not None:
+                dt = max(0.0, min(0.12, time - self._player_last_time))
+            self._player_last_time = time
+            was_air = self._player_was_air
+            if was_air and player.on_ground:
+                self._player_land_anim = 0.14
+            if not was_air and not player.on_ground and player.vy < 0.0:
+                self._player_jump_anim = 0.14
+            self._player_was_air = not player.on_ground
+            self._player_land_anim = max(0.0, self._player_land_anim - dt)
+            self._player_jump_anim = max(0.0, self._player_jump_anim - dt)
+
             if player.inv > 0.0 and int(player.inv * 20) % 2 != 0:
                 return
-            if player.attacking:
-                frame_index = 4
-            elif not player.on_ground:
-                frame_index = 3
-            elif abs(player.vx) > 2.0:
-                frame_index = 1 + int(player.anim * 10) % 2
+
+            base_x, base_y = self._world_px(
+                player.x + player.w / 2.0, player.y + player.h,
+                camera_offset,
+            )
+            self._draw_slime_body(player, base_x, base_y)
+            if player.weapon == "sword":
+                self._draw_slime_sword(player, base_x, base_y)
+            elif player.weapon == "bow":
+                self._draw_slime_bow(player, base_x, base_y)
             else:
-                frame_index = 0
-            frame = self.sprites.frame("player", frame_index, player.facing)
-            self._draw_frame(frame, player.x, player.y, camera_offset)
+                self._draw_slime_gun(player, base_x, base_y)
+
+            if player.weapon_switch_t > 0.0:
+                for gx, gy in ((-1.9, 4.2), (1.9, 4.2),
+                               (-2.2, 1.8), (2.2, 1.8)):
+                    self._put_local(
+                        "+", gx, gy, base_x, base_y,
+                        config.PLAYER_SLIME_RIM, glow=True,
+                    )
+
             px, py = self._world_px(
                 player.x + player.w / 2.0, player.y + player.h / 2.0,
                 camera_offset,
             )
-            self.bloom.add(px, py, self.cw * 2.8, (100, 180, 255), 0.66)
+            self.bloom.add(
+                px, py, self.cw * 2.8, config.PLAYER_LIGHT_COLOR, 0.58,
+            )
 
     def draw_projectiles(self, projectiles, camera_offset):
         with self._phase("sprites"):
             for projectile in projectiles.items:
                 kind = getattr(projectile, "kind", "shot")
+                if getattr(projectile, "friendly", False) and kind in (
+                        "arrow", "bullet"):
+                    px, py = self._world_px(
+                        projectile.x, projectile.y, camera_offset,
+                    )
+                    direction = 1 if projectile.vx >= 0.0 else -1
+                    if kind == "arrow":
+                        self._fg_batch.append((
+                            self.glyphs.surface("-", projectile.color),
+                            (px - direction * self.cw, py),
+                        ))
+                        self._fg_batch.append((
+                            self.glyphs.surface(
+                                ">" if direction > 0 else "<",
+                                projectile.color,
+                            ),
+                            (px, py),
+                        ))
+                        self.stats["sprite_cells"] += 2
+                        self.bloom.add(
+                            px + self.cw // 2, py + self.ch // 2,
+                            self.cw * 1.6, projectile.color, 0.55,
+                        )
+                    else:
+                        self._fg_batch.append((
+                            self.glyphs.surface(".", projectile.color),
+                            (px - direction * self.cw, py),
+                        ))
+                        self._fg_batch.append((
+                            self.glyphs.surface("*", projectile.color),
+                            (px, py),
+                        ))
+                        self.stats["sprite_cells"] += 2
+                        self.bloom.add(
+                            px + self.cw // 2, py + self.ch // 2,
+                            self.cw * 1.8, projectile.color, 0.65,
+                        )
+                    continue
                 if kind in ("shockwave", "ember"):
                     px, py = self._world_px(
                         projectile.x, projectile.y, camera_offset
@@ -895,11 +1298,16 @@ class Renderer:
 
     def draw_slash(self, player, camera_offset):
         with self._phase("sprites"):
+            # Ranged forms communicate their attack through the projectile
+            # and muzzle/string animation instead of a melee arc.
+            if getattr(player, "weapon", "sword") != "sword":
+                return
             if not (player.attacking
                     and player.attack_t >= config.ATTACK_STARTUP):
                 return
             active = player.attack_t < config.ATTACK_ACTIVE_END
-            color = (255, 255, 200) if active else (150, 150, 125)
+            color = (config.PLAYER_SWORD_EDGE if active
+                     else config.PLAYER_SWORD_STEEL)
             if player.pogo:
                 lines = ascii_sprites.SLASH_DOWN
                 bx, by = player.x, player.y + player.h
@@ -1088,16 +1496,21 @@ class Renderer:
 
     def draw_hud(self, player, enemies, locked=False):
         with self._phase("hud"):
+            label = config.WEAPON_DATA.get(
+                getattr(player, "weapon", "sword"),
+                config.WEAPON_DATA["sword"],
+            )["label"]
             hp_text = ("HP [" + "#" * player.hp
-                       + "-" * (player.max_hp - player.hp) + "]")
+                       + "-" * (player.max_hp - player.hp)
+                       + f"]   FORM [{label}]")
             y = 8
             y += self._hud_block(10, y, hp_text, config.HUD_HEALTH_COLOR) + 4
-            self._hud_block(
+            y += self._hud_block(
                 10, y,
                 ("A/D move  S+J pogo  SPACE/W/Z/UP/K jump  J attack  "
-                 "F3 stats  F4 input  R restart"),
+                 "1/2/3 form  F3 stats  F4 input  R restart"),
                 config.HUD_HELP_COLOR,
-            )
+            ) + 4
             if locked:
                 y += self._hud_block(
                     10, y,

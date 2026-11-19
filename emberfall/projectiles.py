@@ -13,7 +13,7 @@ class Projectile:
     """A small moving hitbox that dies on solid tiles or after its lifetime."""
 
     def __init__(self, x, y, vx, vy, damage=1, color=config.WHITE, char="*",
-                 w=1, h=1, lifetime=None, kind="shot"):
+                 w=1, h=1, lifetime=None, kind="shot", friendly=False):
         self.x = float(x)
         self.y = float(y)
         self.w = w
@@ -24,6 +24,7 @@ class Projectile:
         self.color = color
         self.char = char
         self.kind = kind
+        self.friendly = bool(friendly)
         self.lifetime = config.PROJECTILE_LIFETIME if lifetime is None else lifetime
         self.alive = True
 
@@ -63,11 +64,11 @@ class ProjectileSystem:
         self.items.clear()
 
     def spawn(self, x, y, vx, vy, damage=1, color=config.WHITE, char="*",
-              w=1, h=1, lifetime=None, kind="shot"):
+              w=1, h=1, lifetime=None, kind="shot", friendly=False):
         projectile = Projectile(
             x, y, vx, vy,
             damage=damage, color=color, char=char,
-            w=w, h=h, lifetime=lifetime, kind=kind,
+            w=w, h=h, lifetime=lifetime, kind=kind, friendly=friendly,
         )
         self.items.append(projectile)
         return projectile
@@ -77,9 +78,15 @@ class ProjectileSystem:
             projectile.update(dt, level)
         self.items = [projectile for projectile in self.items if projectile.alive]
 
-    def pop_overlap(self, box):
-        """Remove and return the first projectile touching a world AABB."""
+    def pop_overlap(self, box, friendly=False):
+        """Remove and return the first matching projectile touching an AABB.
+
+        The default (``friendly=False``) only considers hostile shots, so
+        the player can never be hurt by its own bow or gun.
+        """
         for projectile in self.items:
+            if projectile.friendly != friendly:
+                continue
             if overlap(projectile.rect, box):
                 self.items.remove(projectile)
                 return projectile

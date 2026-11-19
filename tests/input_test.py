@@ -74,6 +74,10 @@ def test_default_keybinds():
         check(f"{name} still jumps", KEY_ACTIONS[key] == "jump")
     check("J is attack", KEY_ACTIONS[pygame.K_j] == "attack")
     check("X is not a default attack", pygame.K_x not in KEY_ACTIONS)
+    check("1/2/3 select the three weapon forms",
+          KEY_ACTIONS[pygame.K_1] == "weapon_sword"
+          and KEY_ACTIONS[pygame.K_2] == "weapon_bow"
+          and KEY_ACTIONS[pygame.K_3] == "weapon_gun")
     check("S and Down are pogo directions",
           KEY_ACTIONS[pygame.K_s] == "down"
           and KEY_ACTIONS[pygame.K_DOWN] == "down")
@@ -89,6 +93,10 @@ def test_default_keybinds():
     check("config jump list keeps K and old keys",
           raw["jump"] == ["space", "w", "z", "up", "k"])
     check("config attack is J", raw["attack"] == ["j"])
+    check("config binds 1/2/3 to the forms",
+          raw["weapon_sword"] == ["1"]
+          and raw["weapon_bow"] == ["2"]
+          and raw["weapon_gun"] == ["3"])
 
 
 def test_custom_keybinds():
@@ -107,6 +115,8 @@ def test_custom_keybinds():
         binds = load_keybinds(path)
         check("custom jump key loads", binds[pygame.K_q] == "jump")
         check("custom attack key loads", binds[pygame.K_u] == "attack")
+        check("custom file without optional form actions still loads",
+              pygame.K_1 not in binds and "weapon_bow" not in binds.values())
         keyboard = KeyboardInput(binds)
         keyboard.handle_events([key_event(pygame.KEYDOWN, pygame.K_q)])
         check("custom keyboard emits the jump edge",

@@ -96,6 +96,35 @@ ATTACK_REACH = 4               # cells in front of the player
 ATTACK_HEIGHT = 3
 POGO_BOUNCE_SPEED = 22.0       # upward velocity after a downward hit
 
+# The slime morphs its body into one of these forms. The sword keeps the
+# existing melee timing and reach; bow/gun fire friendly projectiles on the
+# normal attack cadence. All numbers are tunable data, not art constants.
+WEAPON_SWITCH_TIME = 0.18
+WEAPON_DATA = {
+    "sword": {
+        "label": "SWORD",
+        "projectile": None,
+    },
+    "bow": {
+        "label": "BOW",
+        "projectile": "arrow",
+        "projectile_speed": 26.0,
+        "projectile_lifetime": 4.0,
+        "projectile_damage": 1,
+        "projectile_color": (155, 232, 255),
+        "projectile_char": ">",
+    },
+    "gun": {
+        "label": "GUN",
+        "projectile": "bullet",
+        "projectile_speed": 44.0,
+        "projectile_lifetime": 2.5,
+        "projectile_damage": 1,
+        "projectile_color": (255, 208, 120),
+        "projectile_char": "*",
+    },
+}
+
 # Enemy stats are data-driven in ENEMY_DATA at the bottom of this file.
 
 # ---------------------------------------------------------------------------
@@ -133,6 +162,25 @@ BG = (12, 12, 18)
 WHITE = (240, 240, 240)
 PLAYER_COLOR = (120, 200, 255)
 ENEMY_COLOR = (220, 70, 70)
+
+# The player is a black slime whose body is drawn at glyph resolution. A
+# cool rim light keeps the silhouette readable against dark rooms while the
+# interior stays near-black. Weapons are formed from the same slime mass.
+PLAYER_SLIME_BODY = (9, 11, 20)
+PLAYER_SLIME_INNER = (22, 26, 43)
+PLAYER_SLIME_EDGE = (58, 84, 128)
+PLAYER_SLIME_RIM = (126, 190, 255)
+PLAYER_SLIME_EYE = (224, 254, 255)
+PLAYER_SLIME_GLINT = (255, 255, 235)
+PLAYER_SWORD_STEEL = (86, 108, 140)
+PLAYER_SWORD_EDGE = (188, 242, 255)
+PLAYER_SWORD_GLINT = (255, 252, 218)
+PLAYER_BOW_LIMB = (73, 126, 190)
+PLAYER_BOW_STRING = (214, 248, 255)
+PLAYER_GUN_BODY = (40, 47, 66)
+PLAYER_GUN_EDGE = (255, 198, 104)
+PLAYER_GUN_CORE = (255, 232, 160)
+PLAYER_LIGHT_COLOR = (168, 219, 255)
 HIT_PARTICLE_COLORS = (WHITE, (255, 220, 120))
 DEATH_PARTICLE_COLORS = ((255, 90, 70), (255, 180, 80), WHITE)
 PLAYER_HURT_PARTICLE_COLORS = ((255, 80, 80), WHITE)

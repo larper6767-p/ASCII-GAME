@@ -7,7 +7,7 @@ from .physics import Body, approach
 
 
 class Player(Body):
-    def __init__(self, x, y):
+    def __init__(self, x, y, weapon="sword"):
         super().__init__(x, y, config.PLAYER_W, config.PLAYER_H)
         self.facing = 1
         self.hp = self.max_hp = config.PLAYER_MAX_HP
@@ -20,17 +20,40 @@ class Player(Body):
         self.inv = 0.0
         self.stun = 0.0
         self.anim = 0.0
+        self.weapon = weapon if weapon in config.WEAPON_DATA else "sword"
+        self.weapon_switch_t = 0.0
+        self.ranged_fired = False
 
     @property
     def attacking(self):
         return self.attack_t >= 0.0
 
+    @property
+    def weapon_data(self):
+        return config.WEAPON_DATA[self.weapon]
+
+    def set_weapon(self, weapon):
+        """Morph to a weapon form; refuse to interrupt an active attack."""
+        if weapon not in config.WEAPON_DATA or self.attacking:
+            return False
+        if weapon != self.weapon:
+            self.weapon = weapon
+            self.weapon_switch_t = config.WEAPON_SWITCH_TIME
+        return True
+
     def start_attack(self, pogo=False):
-        """Begin a swing; a requested pogo becomes downward when airborne."""
+        """Begin a swing; a requested pogo becomes downward when airborne.
+
+        Only the sword can pogo. Bow and gun attacks always fire in the
+        facing direction and use the same startup/active/recovery cadence.
+        """
         if self.stun > 0.0 or self.attacking:
             return False
         self.attack_t = 0.0
-        self.pogo = bool(pogo and not self.on_ground)
+        self.pogo = bool(
+            pogo and not self.on_ground and self.weapon == "sword"
+        )
+        self.ranged_fired = False
         self.hit_set = set()
         return True
 
@@ -44,6 +67,7 @@ class Player(Body):
         self.inv -= dt
         self.stun -= dt
         self.anim += dt
+        self.weapon_switch_t = max(0.0, self.weapon_switch_t - dt)
 
         if self.stun <= 0.0:
             if move_axis and not self.attacking:
@@ -156,9 +180,9 @@ class Enemy(Body):
     def telegraph(self):
         return False
 
-    def take_hit(self, direction):
+    def take_hit(self, direction, damage=1):
         """Apply knockback, stun and flash, then return True if this kills."""
-        self.hp -= 1
+        self.hp -= damage
         self.vx = direction * self.data["knockback_x"]
         self.vy = self.data["knockback_y"]
         self.stun = self.data["stun_time"]
