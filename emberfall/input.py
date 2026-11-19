@@ -10,9 +10,14 @@ the game to rebind. Every action needs at least one key::
       "down": ["s", "down"],
       "jump": ["space", "w", "z", "up", "k"],
       "attack": ["j"],
-      "restart": ["r"]
+      "restart": ["r"],
+      "weapon_sword": ["1"],
+      "weapon_bow": ["2"],
+      "weapon_gun": ["3"]
     }
 
+The three weapon actions are optional for backward compatibility: a custom
+file without them still works, and the slime simply stays on the sword form.
 Key names are SDL/pygame names such as ``space``, ``left``, ``f4`` or a
 single character. Core game logic never reads pygame directly.
 
@@ -31,6 +36,8 @@ import pygame
 ROOT = Path(__file__).resolve().parents[1]
 KEYBINDS_PATH = ROOT / "assets" / "keybinds.json"
 REQUIRED_ACTIONS = ("left", "right", "down", "jump", "attack", "restart")
+OPTIONAL_ACTIONS = ("weapon_sword", "weapon_bow", "weapon_gun")
+ALLOWED_ACTIONS = REQUIRED_ACTIONS + OPTIONAL_ACTIONS
 
 # Used only when the default config file is missing. The file remains the
 # source of truth for a normal checkout so bindings are editable without code.
@@ -41,6 +48,9 @@ FALLBACK_KEYBINDS = {
     "jump": ["space", "w", "z", "up", "k"],
     "attack": ["j"],
     "restart": ["r"],
+    "weapon_sword": ["1"],
+    "weapon_bow": ["2"],
+    "weapon_gun": ["3"],
 }
 
 
@@ -107,7 +117,7 @@ def load_keybinds(path=None):
 
     if not isinstance(raw, dict):
         raise KeybindError(f"{source.name}: expected an object of action -> keys")
-    extra = sorted(set(raw) - set(REQUIRED_ACTIONS))
+    extra = sorted(set(raw) - set(ALLOWED_ACTIONS))
     missing = [action for action in REQUIRED_ACTIONS if action not in raw]
     if extra:
         raise KeybindError(f"{source.name}: unknown actions: {', '.join(extra)}")
@@ -118,7 +128,9 @@ def load_keybinds(path=None):
 
     actions = {}
     used = {}
-    for action in REQUIRED_ACTIONS:
+    for action in ALLOWED_ACTIONS:
+        if action not in raw:
+            continue
         names = raw[action]
         if isinstance(names, str):
             names = [names]

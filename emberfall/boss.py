@@ -95,7 +95,7 @@ class Boss(Enemy):
             return self.data["attack_color"]
         return self.data["color"]
 
-    def take_hit(self, direction):
+    def take_hit(self, direction, damage=1):
         """Bosses do not get knocked back or stunned.
 
         The intro is invulnerable. Crossing half HP starts the visible phase
@@ -105,7 +105,7 @@ class Boss(Enemy):
             return False
         if self.hp <= 0:
             return True
-        self.hp -= 1
+        self.hp -= damage
         self.flash = self.data["flash_time"]
         if (self.hp > 0 and not self.phase_two
                 and self.hp <= self.max_hp * self.data["phase_threshold"]):

@@ -4,5 +4,8 @@
   "down": ["s", "down"],
   "jump": ["space", "w", "z", "up", "k"],
   "attack": ["j"],
-  "restart": ["r"]
+  "restart": ["r"],
+  "weapon_sword": ["1"],
+  "weapon_bow": ["2"],
+  "weapon_gun": ["3"]
 }

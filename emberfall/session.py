@@ -39,6 +39,10 @@ class GameSession:
         self._door_cooldown = 0.0
         self.room_locked = False
         self._lock_watch = {}
+        # The selected weapon form survives deaths and room transitions; a
+        # full restart keeps it too, since it is a control preference rather
+        # than a consumable pickup.
+        self.weapon = "sword"
         self.reset()
 
     def _dead_here(self):
@@ -62,7 +66,8 @@ class GameSession:
         )
         px, py = self.level.player_spawn
         px, py = self._safe_spawn(px, py, self.enemies)
-        self.player = Player(px, py)
+        self.player = Player(px, py, weapon=self.weapon)
+        self.weapon = self.player.weapon
         self.projectiles = ProjectileSystem()
         self.particles = fx.Particles(self.rng)
         self.camera = Camera(config.COLS, self.level.width)
@@ -148,14 +153,7 @@ class GameSession:
         return True
 
     def _failsafe_remove(self, enemy):
-        index = getattr(enemy, "spawn_index", None)
-        if index is not None:
-            self._dead_here().add(index)
-        enemy.death_burst(self.particles)
-        self.enemies.remove(enemy)
-        if not self.enemies:
-            self.room_locked = False
-            self._lock_watch.clear()
+        self._defeat_enemy(enemy)
 
     def _sealed_room_failsafe(self, dt):
         """Keep a sealed arena clearable.
@@ -281,7 +279,8 @@ class GameSession:
         spawn_x, spawn_y = self._safe_spawn(
             base_x, base_y, self.enemies, inward
         )
-        self.player = Player(spawn_x, spawn_y)
+        self.player = Player(spawn_x, spawn_y, weapon=self.weapon)
+        self.weapon = self.player.weapon
         self.player.inv = 0.6
         # Shots never follow the player through a door.
         self.projectiles = ProjectileSystem()
@@ -334,10 +333,18 @@ class GameSession:
             inp.clear_edges()
             return
 
+        for weapon, action in (
+            ("sword", "weapon_sword"),
+            ("bow", "weapon_bow"),
+            ("gun", "weapon_gun"),
+        ):
+            if inp.was_pressed(action):
+                self._select_weapon(weapon)
+
         if inp.was_pressed("jump"):
             self.player.jump_buf = config.JUMP_BUFFER_TIME
         if inp.was_pressed("attack"):
-            # Down + attack is a pogo only while airborne.
+            # Down + attack is a pogo only for the sword while airborne.
             self.player.start_attack(inp.is_held("down"))
 
         self.shake.update(dt)
@@ -351,6 +358,9 @@ class GameSession:
         p = self.player
         move_axis = inp.axis("left", "right")
         p.update(dt, self.level, move_axis, inp.is_held("jump"))
+        if (p.weapon != "sword" and p.attacking and not p.ranged_fired
+                and p.attack_t >= config.ATTACK_STARTUP):
+            self._fire_player_weapon(p)
 
         for enemy in self.enemies:
             enemy.update(dt, self.level, p, self.projectiles)
@@ -366,28 +376,13 @@ class GameSession:
             for enemy in list(self.enemies):
                 if enemy not in p.hit_set and overlap(attack_box, enemy.rect):
                     p.hit_set.add(enemy)
-                    if getattr(enemy, "invulnerable", False):
-                        # The boss intro is a visible no-damage window.
-                        continue
-                    combat.damage_enemy(enemy, p.facing)
-                    if p.pogo:
-                        p.pogo_bounce()
-                    self.hitstop.trigger(config.SWORD_HITSTOP)
-                    self.shake.trigger(config.HIT_SHAKE)
-                    enemy.hit_burst(self.particles)
-                    if enemy.hp <= 0:
-                        if getattr(enemy, "spawn_index", None) is not None:
-                            self._dead_here().add(enemy.spawn_index)
-                        enemy.death_burst(self.particles)
-                        self.enemies.remove(enemy)
-                        if not self.enemies:
-                            # Boss-arena doors unlock on the final kill.
-                            self.room_locked = False
-                            self._lock_watch.clear()
+                    self._hit_enemy(enemy, p.facing, pogo=p.pogo)
 
-        # Projectiles: moving shots never interact with the sword.
+        # Moving shots never interact with the sword. Friendly shots are
+        # resolved against enemies; hostile shots can only hurt the player.
         self.projectiles.update(dt, self.level)
-        projectile = self.projectiles.pop_overlap(p.rect)
+        self._resolve_friendly_projectiles()
+        projectile = self.projectiles.pop_overlap(p.rect, friendly=False)
         if projectile is not None and p.inv <= 0.0:
             self._hurt_player(p, projectile.x, projectile.damage)
 
@@ -410,6 +405,86 @@ class GameSession:
         self.camera.update(target, dt)
 
         self._check_doors()
+
+    def _select_weapon(self, weapon):
+        """Apply a 1/2/3 weapon choice to the slime if it is not mid-swing."""
+        if self.player is None:
+            return
+        if self.player.set_weapon(weapon):
+            self.weapon = weapon
+
+    def _fire_player_weapon(self, player):
+        """Spawn the bow/gun shot at the active frame of the attack."""
+        data = config.WEAPON_DATA[player.weapon]
+        kind = data.get("projectile")
+        if kind is None:
+            return
+        direction = 1 if player.facing > 0 else -1
+        x = player.x + player.w + 0.1 if direction > 0 else player.x - 1.1
+        y = player.y + player.h / 2.0 - 0.5
+        player.ranged_fired = True
+        self.projectiles.spawn(
+            x, y,
+            data["projectile_speed"] * direction, 0.0,
+            damage=data["projectile_damage"],
+            color=data["projectile_color"],
+            char=data["projectile_char"],
+            lifetime=data["projectile_lifetime"],
+            kind=kind,
+            friendly=True,
+        )
+        self.shake.trigger(config.HIT_SHAKE * 0.25)
+        self.particles.burst(
+            x, y + 0.5, 4,
+            (data["projectile_color"], config.WHITE),
+            speed=8.0,
+        )
+
+    def _resolve_friendly_projectiles(self):
+        """Friendly shots hit enemies once, then disappear."""
+        for projectile in list(self.projectiles.items):
+            if not projectile.friendly or not projectile.alive:
+                continue
+            for enemy in list(self.enemies):
+                if overlap(projectile.rect, enemy.rect):
+                    projectile.alive = False
+                    direction = 1 if projectile.vx >= 0.0 else -1
+                    self._hit_enemy(
+                        enemy, direction, pogo=False,
+                        damage=projectile.damage,
+                    )
+                    break
+        self.projectiles.items = [
+            projectile for projectile in self.projectiles.items
+            if projectile.alive
+        ]
+
+    def _hit_enemy(self, enemy, direction, pogo=False, damage=1):
+        """Shared damage/FX path for sword and friendly projectiles."""
+        if getattr(enemy, "invulnerable", False):
+            # The boss intro is a visible no-damage window.
+            return False
+        combat.damage_enemy(enemy, direction, damage)
+        if pogo:
+            self.player.pogo_bounce()
+        self.hitstop.trigger(config.SWORD_HITSTOP)
+        self.shake.trigger(config.HIT_SHAKE)
+        enemy.hit_burst(self.particles)
+        if enemy.hp <= 0:
+            self._defeat_enemy(enemy)
+        return True
+
+    def _defeat_enemy(self, enemy):
+        """Record a kill, remove the enemy, and unlock an emptied arena."""
+        if getattr(enemy, "spawn_index", None) is not None:
+            self._dead_here().add(enemy.spawn_index)
+        enemy.death_burst(self.particles)
+        if enemy in self.enemies:
+            self.enemies.remove(enemy)
+        if not self.enemies:
+            # Boss-arena doors unlock on the final kill.
+            self.room_locked = False
+            self._lock_watch.clear()
 
     def _hurt_player(self, player, source_x, damage):
         combat.damage_player(player, source_x, damage)
