@@ -66,6 +66,8 @@ class App:
                 self.running = False
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_F3:
                 self.renderer.toggle_overlay()
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_F4:
+                self.renderer.toggle_input_debug()
         self.keyboard.handle_events(events)
 
     def run(self):
@@ -76,8 +78,14 @@ class App:
                 self.stepper.advance(frame_dt, self.keyboard)
             # Real wall-clock frame time (includes pacing) for the F3 overlay.
             self.renderer.note_frame(frame_dt * 1000.0)
+            if self.renderer.input_debug_enabled:
+                self.renderer.capture_input_debug(self.keyboard, self.session)
             self.session.draw(self.renderer)
             self.renderer.flip()
+            # Debug edges are kept across all fixed steps in the frame so a
+            # sub-frame jump/attack tap is visible, then cleared for the next
+            # rendered frame.
+            self.keyboard.clear_debug_edges()
         pygame.quit()
 
 

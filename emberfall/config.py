@@ -185,6 +185,7 @@ HUD_HELP_COLOR = (205, 210, 235)
 HUD_CLEAR_COLOR = (255, 226, 130)
 HUD_TEXT_OUTLINE = (0, 0, 0)
 HUD_OVERLAY_COLOR = (170, 235, 170)
+HUD_INPUT_COLOR = (130, 220, 255)
 
 # ---------------------------------------------------------------------------
 # Enemy types

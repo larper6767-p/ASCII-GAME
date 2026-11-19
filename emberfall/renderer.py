@@ -134,7 +134,11 @@ class Renderer:
 
         # F3 debug overlay: real frame time (set by the engine each frame)
         # plus the per-step costs collected while the overlay is enabled.
+        # F4 shows raw input and latched edges for diagnosing keyboard
+        # ghosting or a missed jump.
         self.overlay_enabled = False
+        self.input_debug_enabled = False
+        self.input_debug_lines = ()
         self.frame_ms = 0.0
         self._frame_ms_ema = None
         self.hud_font = pygame.font.Font(load_font_path(),
@@ -207,6 +211,38 @@ class Renderer:
             self.profile = (self.overlay_enabled
                             or self._profile_default)
         return self.overlay_enabled
+
+    def toggle_input_debug(self):
+        """F4: show/hide raw keys, latched edges and the jump buffer."""
+        self.input_debug_enabled = not self.input_debug_enabled
+        return self.input_debug_enabled
+
+    def capture_input_debug(self, keyboard, session):
+        """Snapshot input state for the F4 panel after this frame's steps."""
+        raw = ()
+        raw_names = getattr(keyboard, "raw_key_names", None)
+        if callable(raw_names):
+            raw = tuple(raw_names())
+        raw_text = " ".join(raw) if raw else "-"
+        held = " ".join(sorted(getattr(keyboard, "held", ()))) or "-"
+        edges = set(getattr(keyboard, "frame_pressed", ()))
+        edges |= set(getattr(keyboard, "pressed", ()))
+        player = getattr(session, "player", None)
+        jump_buf = getattr(player, "jump_buf", 0.0) or 0.0
+        on_ground = bool(getattr(player, "on_ground", False))
+        coyote = getattr(player, "coyote", 0.0) or 0.0
+        vy = getattr(player, "vy", 0.0) or 0.0
+        self.input_debug_lines = (
+            "F4 INPUT DEBUG",
+            f"raw keys: {raw_text}",
+            f"actions: {held}",
+            (f"latched: jump={'YES' if 'jump' in edges else 'no'}  "
+             f"attack={'YES' if 'attack' in edges else 'no'}"),
+            (f"jump buffer: {'SET' if jump_buf > 0.0 else 'empty'} "
+             f"({jump_buf:.3f}s)"),
+            (f"ground: {'YES' if on_ground else 'no'}  "
+             f"coyote {coyote:.2f}s  vy {vy:.1f}"),
+        )
 
     # ------------------------------------------------------------------
     # Background / terrain
@@ -905,6 +941,7 @@ class Renderer:
 
     def end_frame(self):
         self.draw_overlay()
+        self.draw_input_debug()
         self.flush()
         with self._phase("bloom"):
             if config.QUALITY_BLOOM:
@@ -968,7 +1005,8 @@ class Renderer:
             y += self._hud_block(10, y, hp_text, config.HUD_HEALTH_COLOR) + 4
             self._hud_block(
                 10, y,
-                "A/D move  S+J pogo  SPACE jump  J attack  F3 stats  R restart",
+                ("A/D move  S+J pogo  SPACE/W/Z/UP/K jump  J attack  "
+                 "F3 stats  F4 input  R restart"),
                 config.HUD_HELP_COLOR,
             )
             if locked:
@@ -1024,6 +1062,29 @@ class Renderer:
             )
             x = self._screen_size[0] - width - 10
             y = 10
+            self._fg_batch.append((self._panel(width, height), (x, y)))
+            y += 8
+            for surf in rendered:
+                self._fg_batch.append((surf, (x + 8, y)))
+                y += surf.get_height() + 8
+
+    def draw_input_debug(self):
+        """F4 panel: bottom-left so it does not cover the HP/help HUD."""
+        with self._phase("overlay"):
+            if not self.input_debug_enabled or not self.input_debug_lines:
+                return
+            font = self.overlay_font
+            rendered = [
+                self._text_surface(line, config.HUD_INPUT_COLOR, font,
+                                   outline=False, cache=False)
+                for line in self.input_debug_lines
+            ]
+            width = max(s.get_width() for s in rendered) + 16
+            height = sum(s.get_height() for s in rendered) + 8 * (
+                len(rendered) + 1
+            )
+            x = 10
+            y = self._screen_size[1] - height - 10
             self._fg_batch.append((self._panel(width, height), (x, y)))
             y += 8
             for surf in rendered:
