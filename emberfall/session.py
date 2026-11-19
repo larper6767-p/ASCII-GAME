@@ -4,7 +4,7 @@ import random
 from . import combat, config, fx
 from .entities import Player, create_enemy
 from .input import InputState
-from .physics import overlap
+from .physics import collides, overlap
 from .projectiles import ProjectileSystem
 from .rooms import load_room_by_id
 from .world import Camera, build_demo_level
@@ -54,14 +54,16 @@ class GameSession:
 
     def reset(self):
         """Respawn the player and (non-killed) enemies. World time keeps running."""
-        px, py = self.level.player_spawn
-        self.player = Player(px, py)
         self._spawn_enemies()
+        px, py = self.level.player_spawn
+        px, py = self._safe_spawn(px, py, self.enemies)
+        self.player = Player(px, py)
         self.projectiles = ProjectileSystem()
         self.particles = fx.Particles(self.rng)
         self.camera = Camera(config.COLS, self.level.width)
         self.hitstop = combat.HitStop()
         self.shake = fx.ScreenShake()
+        self._door_cooldown = 0.0
 
     def restart(self):
         """Full restart: cleared killed-enemy state, then reset."""
@@ -70,6 +72,31 @@ class GameSession:
         self._pending_cache_warm = None
         self._door_cooldown = 0.0
         self.reset()
+
+    def _safe_spawn(self, x, y, enemies, inward=1):
+        """Find an arrival point clear of solids and living enemies.
+
+        The intended point is tried first; then points further inward (away
+        from the door) and a few rows up, so a bad spawn never drops the
+        player into a wall or on top of an enemy.
+        """
+        level = self.level
+        w, h = config.PLAYER_W, config.PLAYER_H
+        for step in range(0, 12):
+            cx = x + inward * step
+            for dy in (0, -1, -2, -3, -4, -5, -6, 1, 2):
+                cy = y + dy
+                if cx < 0 or cx + w > level.width:
+                    continue
+                if cy < 0 or cy + h > level.height:
+                    continue
+                if collides(level, cx, cy, w, h):
+                    continue
+                box = (cx, cy, w, h)
+                if any(overlap(box, enemy.rect) for enemy in enemies):
+                    continue
+                return float(cx), float(cy)
+        return float(x), float(y)
 
     def _check_doors(self):
         if self.transition is not None or self._door_cooldown > 0.0:
@@ -109,12 +136,24 @@ class GameSession:
 
     def _finish_transition(self):
         t = self.transition
-        self.room_id = t["dest"]
-        self.level = load_room_by_id(t["dest"])
-        spawn = self._spawn_for_side(t["dest_side"], self.level)
-        self.player = Player(*spawn)
-        self.player.inv = 0.6
+        self._enter_room(t["dest"], t["dest_side"])
+        # Switch to fade-in.
+        self.transition["phase"] = "in"
+        self.transition["t"] = 0.0
+
+    def _enter_room(self, room_id, side):
+        """Load a destination room and rebuild all transient scene state."""
+        self.room_id = room_id
+        self.level = load_room_by_id(room_id)
         self._spawn_enemies()
+        inward = 1 if side == "left" else (-1 if side == "right" else 0)
+        base_x, base_y = self._spawn_for_side(side, self.level)
+        spawn_x, spawn_y = self._safe_spawn(
+            base_x, base_y, self.enemies, inward
+        )
+        self.player = Player(spawn_x, spawn_y)
+        self.player.inv = 0.6
+        # Shots never follow the player through a door.
         self.projectiles = ProjectileSystem()
         self.particles = fx.Particles(self.rng)
         self.camera = Camera(config.COLS, self.level.width)
@@ -126,9 +165,6 @@ class GameSession:
         self.shake = fx.ScreenShake()
         self._pending_cache_warm = (self.level, self.camera.offset)
         self._door_cooldown = 0.5
-        # Switch to fade-in.
-        self.transition["phase"] = "in"
-        self.transition["t"] = 0.0
 
     def _update_transition(self, dt):
         t = self.transition
@@ -146,7 +182,25 @@ class GameSession:
             self.restart()
             return
         if self.transition is not None:
+            # A lethal hit that landed on the frame the door was touched
+            # (or external damage in tests) must not leave the session
+            # stuck mid-fade.
+            if self.player.hp <= 0.0:
+                phase = self.transition["phase"]
+                self.transition = None
+                self._pending_cache_warm = None
+                self._door_cooldown = 0.0
+                self.reset()
+                if phase == "in":
+                    # We already switched rooms; keep the destination warm.
+                    self._pending_cache_warm = (
+                        self.level, self.camera.offset
+                    )
+                return
             self._update_transition(dt)
+            # One-shot presses during a fade are dropped; held actions are
+            # kept, so movement resumes immediately after arrival.
+            inp.clear_edges()
             return
 
         if inp.was_pressed("jump"):
