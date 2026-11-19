@@ -13,6 +13,7 @@ enabled (``Renderer(profile=True)`` or config.RENDER_PROFILE).
 from __future__ import annotations
 
 import math
+import random
 import time
 
 import pygame
@@ -97,7 +98,20 @@ class Renderer:
         self._world_static_by_x = None
         self._world_grass_by_x = None
         self._world_level = None
+        self._world_torches = ()
         self._active_level = None
+
+        # Per-room atmosphere (palette, fog density, ember colour). Rooms
+        # without metadata use the same default dict so re-applying is free.
+        self._default_atmosphere = config.default_atmosphere()
+        self._atmosphere = self._default_atmosphere
+        self._rock_tint = (255, 255, 255)
+        ember_rng = random.Random(20261119)
+        self._ember_seeds = tuple(
+            (ember_rng.random(), ember_rng.random(), ember_rng.random(),
+             ember_rng.random(), ember_rng.random())
+            for _ in range(config.AMBIENT_EMBER_COUNT)
+        )
 
         self.parallax = Parallax(
             self._screen_size[0], self._screen_size[1], self.world_tile_w
@@ -166,7 +180,9 @@ class Renderer:
                 sprite_cells=0, particle_cells=0, terrain_cells=0,
             )
             self.bloom.begin()
-            self.screen.fill(config.BG)
+            self.screen.fill(
+                self._atmosphere.get("sky", config.ATMO_SKY)
+            )
 
     def flip(self):
         with self._phase("present"):
@@ -252,6 +268,7 @@ class Renderer:
         bg_batch = []
         static_by_x = [[] for _ in range(level.width)]
         grass_by_x = [[] for _ in range(level.width)]
+        torch_cells = []
         for wx in range(level.width):
             for sy in range(self.rows):
                 tile = level.tile_at(wx, sy)
@@ -271,9 +288,10 @@ class Renderer:
                             )
                             if cell is not None:
                                 char, color = cell
-                                static_by_x[wx].append(
-                                    (sy, sub_x, sub_y, char, color)
-                                )
+                                static_by_x[wx].append((
+                                    sy, sub_x, sub_y, char,
+                                    quantize_color(tint(color, self._rock_tint)),
+                                ))
                 elif tile == '"':
                     for sub_y in range(self.sub):
                         for sub_x in range(self.sub):
@@ -282,10 +300,13 @@ class Renderer:
                             grass_by_x[wx].append(
                                 (sy, sub_x, sub_y, wx, sy)
                             )
+                elif tile == "T":
+                    torch_cells.append((wx, sy))
         surface.blits(bg_batch, doreturn=False)
         self._world_bg_surface = surface
         self._world_static_by_x = tuple(static_by_x)
         self._world_grass_by_x = tuple(grass_by_x)
+        self._world_torches = tuple(torch_cells)
         self._world_level = level
 
     def _build_terrain_cache(self, ox, level):
@@ -298,6 +319,9 @@ class Renderer:
         # Camera offsets are normally non-negative; the negative case is
         # handled by Pygame clipping when screen shake pulls left of zero.
         surface.blit(self._world_bg_surface, (-ox * self.sub, 0))
+        # Bake the room palette into this camera slice (never into the shared
+        # world surface, or repeated builds would compound the tint).
+        surface.fill(self._rock_tint, special_flags=pygame.BLEND_RGB_MULT)
         static_cells = []
         grass_cells = []
         for sx in range(self.cols):
@@ -324,6 +348,31 @@ class Renderer:
         self._terrain_fg_cache[ox] = result
         return result
 
+    def set_atmosphere(self, level):
+        """Apply a room's palette/fog/ember metadata to cached visuals.
+
+        Rooms use a stable atmosphere dict, so this is a no-op every frame
+        and only rebuilds when the active room changes (during the fade).
+        """
+        atmosphere = getattr(level, "atmosphere", None)
+        if atmosphere is None:
+            atmosphere = self._default_atmosphere
+        if atmosphere is self._atmosphere:
+            return
+        self._atmosphere = atmosphere
+        rock = atmosphere.get("rock", config.ATMO_ROCK)
+        peak = max(1, max(rock))
+        self._rock_tint = tuple(
+            min(255, int(c * 255.0 / peak)) for c in rock
+        )
+        # Terrain glyph colours bake the rock tint, so drop caches built for
+        # the previous palette. The rebuild happens during the door fade.
+        self._terrain_fg_cache.clear()
+        self._world_level = None
+        self._world_bg_surface = None
+        self._world_torches = ()
+        self.parallax.set_atmosphere(atmosphere)
+
     def prepare_room(self, level, camera_offset=0):
         """Warm world + terrain caches for a freshly loaded room.
 
@@ -331,6 +380,7 @@ class Renderer:
         does not pay the cache-build cost. Builds the world surface and the
         cache for the spawn camera offset plus a couple of neighbours.
         """
+        self.set_atmosphere(level)
         ox = int(round(camera_offset))
         self._ensure_world_terrain(level)
         for d in (-1, 0, 1):
@@ -397,13 +447,37 @@ class Renderer:
                     append((glyph, (px, py)))
                     self.stats["terrain_cells"] += 1
 
-    def draw_doors(self, level, camera_offset, world_time=0.0):
+            # Torch/fire tiles: a flickering self-luminous flame whose light
+            # source is added by update_lighting.
+            accent = self._atmosphere.get("accent", config.ATMO_ACCENT)
+            for wx, wy in self._world_torches:
+                sx = wx - ox
+                if sx < -2 or sx > self.cols + 2:
+                    continue
+                px, py = self._world_px(wx, wy, ox)
+                flicker = self._torch_flicker(wx, wy, world_time)
+                bob = int(round(
+                    math.sin(world_time * 6.3 + wx * 0.73) * self.ch * 0.12
+                ))
+                core = quantize_color((
+                    255,
+                    min(255, int(180 + 60 * flicker)),
+                    min(255, int(70 + 110 * flicker)),
+                ), step=16)
+                self.put_world_glyph("|", px, py + bob, core, glow=True)
+                self.put_world_glyph("^", px, py - self.ch + bob, accent)
+
+    def draw_doors(self, level, camera_offset, world_time=0.0, locked=False):
         """Draw a pulsing arch on each door edge of the active room."""
         doors = getattr(level, "doors", None)
         if not doors:
             return
-        pulse = 0.55 + 0.45 * math.sin(world_time * 3.2)
-        color = (255, int(150 + 80 * pulse), 80)
+        if locked:
+            pulse = 0.5 + 0.5 * math.sin(world_time * 7.0)
+            color = (255, int(70 + 60 * pulse), int(55 + 35 * pulse))
+        else:
+            pulse = 0.55 + 0.45 * math.sin(world_time * 3.2)
+            color = (255, int(150 + 80 * pulse), 80)
         with self._phase("terrain"):
             for door in doors:
                 x, y, w, h = door["rect"]
@@ -449,8 +523,21 @@ class Renderer:
     # ------------------------------------------------------------------
     # Lighting
     # ------------------------------------------------------------------
-    def update_lighting(self, player, enemies, projectiles, camera_offset):
+    def _torch_flicker(self, wx, wy, world_time):
+        """Deterministic per-torch flicker in roughly 0.35..1.25."""
+        phase = (wx * 12.9898 + wy * 78.233) % (math.pi * 2.0)
+        value = (
+            0.72
+            + 0.18 * math.sin(world_time * config.TORCH_FLICKER_SPEED + phase)
+            + 0.10 * math.sin(world_time * 21.7 + phase * 1.7)
+        )
+        return max(0.35, min(1.25, value))
+
+    def update_lighting(self, player, enemies, projectiles, camera_offset,
+                        world_time=0.0, level=None):
         with self._phase("lighting"):
+            if level is not None:
+                self._ensure_world_terrain(level)
             self.light_layer.reset()
             if player is not None:
                 self.light_layer.add_light(
@@ -476,6 +563,20 @@ class Renderer:
                         4.5 * self.sub,
                         0.55,
                         enemy.data.get("windup_color", (255, 225, 90)),
+                    )
+            # Torch/fire tiles flicker and light the room with the accent
+            # colour. Only visible torches are submitted to the light layer.
+            accent = self._atmosphere.get("accent", config.ATMO_ACCENT)
+            for wx, wy in self._world_torches:
+                sx = wx - camera_offset
+                if -8 <= sx <= self.cols + 8:
+                    flicker = self._torch_flicker(wx, wy, world_time)
+                    self.light_layer.add_light(
+                        int((sx + 0.5) * self.sub),
+                        int((wy + 0.35) * self.sub),
+                        config.TORCH_LIGHT_RADIUS * self.sub,
+                        config.TORCH_LIGHT_STRENGTH * flicker,
+                        accent,
                     )
             self.light_layer.build_surface()
 
@@ -719,6 +820,41 @@ class Renderer:
                         self.cw * 1.5, particle.color, 0.65,
                     )
 
+    def draw_ambient(self, camera_offset, world_time):
+        """Rising ember motes in the room's ember colour.
+
+        Purely visual and deterministic: positions derive from world time
+        and camera scroll, never from simulation state.
+        """
+        with self._phase("particles"):
+            ember = self._atmosphere.get("ember", config.ATMO_EMBER)
+            width, height = self._screen_size
+            cw, ch = self.cw, self.ch
+            for index, (x0, y0, phase, drift, speed) in enumerate(
+                    self._ember_seeds):
+                t = world_time * (0.55 + speed * 0.7) + phase * 19.0
+                x = (
+                    x0 * width
+                    + math.sin(t * 0.8 + phase * 6.0 + drift * 4.0) * 24.0
+                    - camera_offset * self.world_tile_w * 0.18
+                ) % width
+                y = (
+                    y0 * height - t * config.AMBIENT_EMBER_RISE * height
+                ) % height
+                pulse = 0.5 + 0.5 * math.sin(t * 2.3 + phase * 4.0)
+                color = quantize_color(tuple(
+                    min(255, int(c * (0.5 + 0.5 * pulse))) for c in ember
+                ), step=16)
+                char = "." if index % 3 else "'"
+                self._fg_batch.append(
+                    (self.glyphs.surface(char, color), (int(x), int(y)))
+                )
+                if index % 5 == 0:
+                    self.bloom.add(
+                        int(x) + cw // 2, int(y) + ch // 2,
+                        cw * 1.4, ember, 0.45 + 0.3 * pulse,
+                    )
+
     # ------------------------------------------------------------------
     # Direct glyph API (HUD / compatibility)
     # ------------------------------------------------------------------
@@ -824,7 +960,7 @@ class Renderer:
         self._fg_batch.append((surf, (x + pad_x, y + pad_y)))
         return panel.get_height()
 
-    def draw_hud(self, player, enemies):
+    def draw_hud(self, player, enemies, locked=False):
         with self._phase("hud"):
             hp_text = ("HP [" + "#" * player.hp
                        + "-" * (player.max_hp - player.hp) + "]")
@@ -835,6 +971,13 @@ class Renderer:
                 "A/D move  S+J pogo  SPACE jump  J attack  F3 stats  R restart",
                 config.HUD_HELP_COLOR,
             )
+            if locked:
+                y += self._hud_block(
+                    10, y,
+                    "DOORS SEALED - DEFEAT ALL ENEMIES",
+                    (255, 116, 96),
+                    self.overlay_font,
+                )
             if not enemies:
                 surf = self._text_surface("ALL ENEMIES SLAIN",
                                           config.HUD_CLEAR_COLOR)

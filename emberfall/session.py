@@ -37,6 +37,8 @@ class GameSession:
         self.transition = None
         self._pending_cache_warm = None
         self._door_cooldown = 0.0
+        self.room_locked = False
+        self._lock_watch = {}
         self.reset()
 
     def _dead_here(self):
@@ -55,6 +57,9 @@ class GameSession:
     def reset(self):
         """Respawn the player and (non-killed) enemies. World time keeps running."""
         self._spawn_enemies()
+        self.room_locked = bool(
+            getattr(self.level, "lock_on_enter", False) and self.enemies
+        )
         px, py = self.level.player_spawn
         px, py = self._safe_spawn(px, py, self.enemies)
         self.player = Player(px, py)
@@ -64,6 +69,7 @@ class GameSession:
         self.hitstop = combat.HitStop()
         self.shake = fx.ScreenShake()
         self._door_cooldown = 0.0
+        self._lock_watch = {}
 
     def restart(self):
         """Full restart: cleared killed-enemy state, then reset."""
@@ -101,6 +107,8 @@ class GameSession:
     def _check_doors(self):
         if self.transition is not None or self._door_cooldown > 0.0:
             return
+        if self.room_locked:
+            return
         doors = getattr(self.level, "doors", None)
         if not doors:
             return
@@ -111,6 +119,125 @@ class GameSession:
                     and p.y < r[1] + r[3] and p.y + p.h > r[1]):
                 self._start_transition(door)
                 break
+
+    # ------------------------------------------------------------------
+    # Sealed-room fail-safe
+    # ------------------------------------------------------------------
+    def _enemy_out_of_bounds(self, enemy):
+        level = self.level
+        return (
+            enemy.x < 0.0 or enemy.y < 0.0
+            or enemy.x + enemy.w > level.width
+            or enemy.y + enemy.h > level.height
+        )
+
+    def _return_enemy_to_spawn(self, enemy):
+        index = getattr(enemy, "spawn_index", None)
+        if index is None or not 0 <= index < len(self.level.enemy_spawns):
+            return False
+        _, x, y = self.level.enemy_spawns[index]
+        enemy.x = float(x)
+        enemy.y = float(y)
+        enemy.vx = enemy.vy = 0.0
+        enemy.on_ground = False
+        enemy.stun = 0.0
+        enemy.flash = 0.0
+        if hasattr(enemy, "home_x"):
+            enemy.home_x = enemy.x + enemy.w / 2.0
+            enemy.home_y = enemy.y + enemy.h / 2.0
+        return True
+
+    def _failsafe_remove(self, enemy):
+        index = getattr(enemy, "spawn_index", None)
+        if index is not None:
+            self._dead_here().add(index)
+        enemy.death_burst(self.particles)
+        self.enemies.remove(enemy)
+        if not self.enemies:
+            self.room_locked = False
+            self._lock_watch.clear()
+
+    def _sealed_room_failsafe(self, dt):
+        """Keep a sealed arena clearable.
+
+        Out-of-bounds enemies get one return to their spawn; repeat escapes
+        and enemies embedded in geometry for ``LOCK_STUCK_SECONDS`` are
+        removed and recorded as defeated, so the doors can always unlock.
+        """
+        if not self.room_locked:
+            self._lock_watch.clear()
+            return
+        for enemy in list(self.enemies):
+            key = getattr(enemy, "spawn_index", id(enemy))
+            watch = self._lock_watch.get(key)
+            if watch is None:
+                watch = {
+                    "pos": (enemy.x, enemy.y),
+                    "hp": enemy.hp,
+                    "state": getattr(enemy, "state", None),
+                    "stuck": 0.0,
+                    "idle": 0.0,
+                    "returns": 0,
+                }
+                self._lock_watch[key] = watch
+
+            if self._enemy_out_of_bounds(enemy):
+                if watch["returns"] >= config.LOCK_ESCAPE_RETURNS:
+                    self._failsafe_remove(enemy)
+                else:
+                    watch["returns"] += 1
+                    if self._return_enemy_to_spawn(enemy):
+                        watch.update(
+                            pos=(enemy.x, enemy.y), hp=enemy.hp,
+                            state=getattr(enemy, "state", None),
+                            stuck=0.0, idle=0.0,
+                        )
+                    else:
+                        self._failsafe_remove(enemy)
+                continue
+
+            if collides(self.level, enemy.x, enemy.y, enemy.w, enemy.h):
+                watch["stuck"] += dt
+                if watch["stuck"] >= config.LOCK_STUCK_SECONDS:
+                    self._failsafe_remove(enemy)
+                    continue
+            else:
+                watch["stuck"] = 0.0
+
+            moved = (
+                abs(enemy.x - watch["pos"][0])
+                + abs(enemy.y - watch["pos"][1])
+            )
+            state = getattr(enemy, "state", None)
+            if (moved > 0.01 or enemy.hp < watch["hp"]
+                    or state != watch["state"]):
+                watch["idle"] = 0.0
+            else:
+                watch["idle"] += dt
+            watch["pos"] = (enemy.x, enemy.y)
+            watch["hp"] = enemy.hp
+            watch["state"] = state
+
+            if watch["idle"] >= config.LOCK_IDLE_SECONDS:
+                if watch["returns"] >= config.LOCK_ESCAPE_RETURNS:
+                    self._failsafe_remove(enemy)
+                else:
+                    watch["returns"] += 1
+                    if self._return_enemy_to_spawn(enemy):
+                        watch.update(
+                            pos=(enemy.x, enemy.y), hp=enemy.hp,
+                            state=getattr(enemy, "state", None),
+                            stuck=0.0, idle=0.0,
+                        )
+                    else:
+                        self._failsafe_remove(enemy)
+        live = {
+            getattr(enemy, "spawn_index", id(enemy))
+            for enemy in self.enemies
+        }
+        for key in list(self._lock_watch):
+            if key not in live:
+                del self._lock_watch[key]
 
     def _start_transition(self, door):
         self.transition = {
@@ -146,6 +273,9 @@ class GameSession:
         self.room_id = room_id
         self.level = load_room_by_id(room_id)
         self._spawn_enemies()
+        self.room_locked = bool(
+            getattr(self.level, "lock_on_enter", False) and self.enemies
+        )
         inward = 1 if side == "left" else (-1 if side == "right" else 0)
         base_x, base_y = self._spawn_for_side(side, self.level)
         spawn_x, spawn_y = self._safe_spawn(
@@ -165,6 +295,7 @@ class GameSession:
         self.shake = fx.ScreenShake()
         self._pending_cache_warm = (self.level, self.camera.offset)
         self._door_cooldown = 0.5
+        self._lock_watch = {}
 
     def _update_transition(self, dt):
         t = self.transition
@@ -223,6 +354,8 @@ class GameSession:
 
         for enemy in self.enemies:
             enemy.update(dt, self.level, p, self.projectiles)
+        if self.room_locked:
+            self._sealed_room_failsafe(dt)
 
         # Sword hits, resolved before contact damage. Enemy state never
         # prevents damage, so every enemy can be hit during any windup.
@@ -242,6 +375,10 @@ class GameSession:
                             self._dead_here().add(enemy.spawn_index)
                         enemy.death_burst(self.particles)
                         self.enemies.remove(enemy)
+                        if not self.enemies:
+                            # Boss-arena doors unlock on the final kill.
+                            self.room_locked = False
+                            self._lock_watch.clear()
 
         # Projectiles: moving shots never interact with the sword.
         self.projectiles.update(dt, self.level)
@@ -282,6 +419,8 @@ class GameSession:
     # Drawing
     # ------------------------------------------------------------------
     def draw(self, renderer):
+        # Apply the room palette before any cached layers are prepared.
+        renderer.set_atmosphere(self.level)
         p = self.player
         ox = self.camera.offset + self.shake.x_offset()
 
@@ -295,16 +434,19 @@ class GameSession:
         renderer.begin_frame(ox)
         renderer.draw_parallax(ox, self.time)
         renderer.update_lighting(
-            p, self.enemies, self.projectiles, ox
+            p, self.enemies, self.projectiles, ox, self.time, self.level
         )
         renderer.draw_terrain(self.level, ox, self.time, p)
-        renderer.draw_doors(self.level, ox, self.time)
+        renderer.draw_doors(
+            self.level, ox, self.time, locked=self.room_locked
+        )
         renderer.draw_enemies(self.enemies, ox)
         renderer.draw_player(p, ox, self.time)
         renderer.draw_projectiles(self.projectiles, ox)
         renderer.draw_slash(p, ox)
         renderer.draw_particles(self.particles, ox)
-        renderer.draw_hud(p, self.enemies)
+        renderer.draw_ambient(ox, self.time)
+        renderer.draw_hud(p, self.enemies, locked=self.room_locked)
         renderer.end_frame()
 
         # Fade overlay on top of everything during a transition.
