@@ -1,0 +1,11 @@
+# Room legend (one character per tile)
+#   #   solid ground / wall
+#   =   platform
+#   "   decorative grass (on top of solid ground)
+#   .   empty air
+#
+# Metadata (after a line containing only ---):
+#   spawn X Y
+#   enemy <type> X Y     (type: crawler, flyer, spitter)
+#   door <side> <dest_room> <dest_spawn_side>
+#       side / dest_spawn_side: left, right, top, bottom

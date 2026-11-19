@@ -46,7 +46,7 @@ class App:
         pygame.display.set_caption("Emberfall")
         self.clock = pygame.time.Clock()
         self.render_fps = render_fps
-        self.session = GameSession()
+        self.session = GameSession(room_id="room1")
         self.keyboard = KeyboardInput()
         self.stepper = FixedStepper(self.session)
         self.state = GameState.PLAYING
