@@ -12,6 +12,7 @@ enabled (``Renderer(profile=True)`` or config.RENDER_PROFILE).
 """
 from __future__ import annotations
 
+import math
 import time
 
 import pygame
@@ -128,6 +129,8 @@ class Renderer:
         self.overlay_font = pygame.font.Font(load_font_path(), 13)
         self._text_cache = {}
         self._panel_cache = {}
+        self._fade_surface = pygame.Surface(self._screen_size,
+                                           pygame.SRCALPHA)
 
     # ------------------------------------------------------------------
     # Timing helpers
@@ -144,6 +147,14 @@ class Renderer:
     # ------------------------------------------------------------------
     # Frame setup / present
     # ------------------------------------------------------------------
+    def draw_fade(self, alpha):
+        """Darken the finished frame for room-transition fades."""
+        alpha = int(max(0, min(255, alpha)))
+        if alpha <= 0:
+            return
+        self._fade_surface.fill((0, 0, 0, alpha))
+        self.screen.blit(self._fade_surface, (0, 0))
+
     def begin_frame(self, camera_offset=0):
         with self._phase("clear"):
             self._ox = camera_offset
@@ -232,6 +243,9 @@ class Renderer:
         """Build one camera-independent background/cell table per level."""
         if self._world_level is level and self._world_bg_surface is not None:
             return
+        # Camera-offset caches are keyed only by ox, so a new level must
+        # invalidate them before the world surface is rebuilt.
+        self._terrain_fg_cache.clear()
         world_w = max(1, level.width * self.sub)
         world_h = self.sub_rows
         surface = pygame.Surface((world_w, world_h), pygame.SRCALPHA)
@@ -310,6 +324,20 @@ class Renderer:
         self._terrain_fg_cache[ox] = result
         return result
 
+    def prepare_room(self, level, camera_offset=0):
+        """Warm world + terrain caches for a freshly loaded room.
+
+        Called during a transition fade so the first post-transition frame
+        does not pay the cache-build cost. Builds the world surface and the
+        cache for the spawn camera offset plus a couple of neighbours.
+        """
+        ox = int(round(camera_offset))
+        self._ensure_world_terrain(level)
+        for d in (-1, 0, 1):
+            self._build_terrain_cache(ox + d, level)
+        self.light_layer.reset()
+        self._active_level = level
+
     def _make_styled_glyph(self, char, color, light):
         density_char = self.glyphs.density_char(char, light / 255.0)
         if density_char == " ":
@@ -368,6 +396,32 @@ class Renderer:
                 if glyph is not None:
                     append((glyph, (px, py)))
                     self.stats["terrain_cells"] += 1
+
+    def draw_doors(self, level, camera_offset, world_time=0.0):
+        """Draw a pulsing arch on each door edge of the active room."""
+        doors = getattr(level, "doors", None)
+        if not doors:
+            return
+        pulse = 0.55 + 0.45 * math.sin(world_time * 3.2)
+        color = (255, int(150 + 80 * pulse), 80)
+        with self._phase("terrain"):
+            for door in doors:
+                x, y, w, h = door["rect"]
+                side = door["side"]
+                if side in ("left", "right"):
+                    wx = x + (1 if side == "left" else 0)
+                    for wy in range(y, y + h):
+                        px, py = self._world_px(wx, wy, camera_offset)
+                        self.put_world_glyph(
+                            "\u2502", px, py, color, glow=True
+                        )
+                else:
+                    wy = y + (1 if side == "top" else 0)
+                    for wx in range(x, x + w):
+                        px, py = self._world_px(wx, wy, camera_offset)
+                        self.put_world_glyph(
+                            "\u2500", px, py, color, glow=True
+                        )
 
     def _terrain_cell(self, tile, wx, sy, sub_x, sub_y, above):
         if tile == "#":
