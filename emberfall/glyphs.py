@@ -43,14 +43,18 @@ def _bits_from_surface(surface, cw, ch, threshold=32):
 class GlyphLibrary:
     """Font metrics, glyph masks, density variants and colour caches."""
 
-    def __init__(self, cw=config.GLYPH_CELL_W, ch=config.GLYPH_CELL_H,
-                 font_size=config.GLYPH_FONT_SIZE, bold=config.GLYPH_FONT_BOLD,
+    def __init__(self, cw=None, ch=None,
+                 font_size=None, bold=None,
                  font_path=None):
-        self.cw = cw
-        self.ch = ch
+        # Read config at construction time (not at import time) so tools can
+        # call config.set_cell_mode() before building a renderer.
+        self.cw = config.GLYPH_CELL_W if cw is None else cw
+        self.ch = config.GLYPH_CELL_H if ch is None else ch
+        font_size = config.GLYPH_FONT_SIZE if font_size is None else font_size
+        bold = config.GLYPH_FONT_BOLD if bold is None else bold
         self.font = pygame.font.Font(font_path or _font_path(), font_size)
         self.font.set_bold(bold)
-        self.area = cw * ch
+        self.area = self.cw * self.ch
         self._surfaces = {}
         self._match_cache = {}
         self._variants = {}

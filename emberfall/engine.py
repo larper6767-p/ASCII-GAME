@@ -64,6 +64,8 @@ class App:
                 self.running = False
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 self.running = False
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_F3:
+                self.renderer.toggle_overlay()
         self.keyboard.handle_events(events)
 
     def run(self):
@@ -72,6 +74,8 @@ class App:
             self.process_events()
             if self.state == GameState.PLAYING:
                 self.stepper.advance(frame_dt, self.keyboard)
+            # Real wall-clock frame time (includes pacing) for the F3 overlay.
+            self.renderer.note_frame(frame_dt * 1000.0)
             self.session.draw(self.renderer)
             self.renderer.flip()
         pygame.quit()

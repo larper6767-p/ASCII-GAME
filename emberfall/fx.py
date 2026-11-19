@@ -65,8 +65,8 @@ def grass_char(wx, wy, player, time):
         char = "\\" if wind < -0.35 else "/" if wind > 0.35 else "|"
     else:
         char = "`" if wind < -0.35 else "'" if wind > 0.35 else ","
-    shade = 120 + (wx * 37) % 80
-    return char, (50, shade, 60)
+    shade = 170 + (wx * 37) % 78
+    return char, (62, shade, 74)
 
 
 class ScreenShake:

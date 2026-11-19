@@ -10,11 +10,26 @@ ROWS = 28                      # visible physics cells down
 # cell is drawn as GLYPH_SCALE x GLYPH_SCALE small glyph cells. None of the
 # physics constants below are expressed in glyph cells.
 GLYPH_SCALE = 2                # 2x2 glyph cells per physics tile
-GLYPH_CELL_W = 6               # small glyph cell, pixels
-GLYPH_CELL_H = 10
-GLYPH_FONT_SIZE = 8
+# Cell preset: "6x10" (default, fast) or "8x14" (larger glyphs, larger
+# window). Use set_cell_mode() before creating a Renderer to switch.
+CELL_MODE = "6x10"
+CELL_PRESETS = {
+    "6x10": (6, 10, 8),        # (cell_w, cell_h, font_size)
+    "8x14": (8, 14, 12),
+}
+GLYPH_CELL_W, GLYPH_CELL_H, GLYPH_FONT_SIZE = CELL_PRESETS[CELL_MODE]
 GLYPH_FONT_PATH = "assets/fonts/DejaVuSansMono.ttf"
 GLYPH_FONT_BOLD = False
+
+
+def set_cell_mode(mode):
+    """Switch the glyph-cell preset; returns the new (w, h, font) triple."""
+    global GLYPH_CELL_W, GLYPH_CELL_H, GLYPH_FONT_SIZE, CELL_MODE
+    if mode not in CELL_PRESETS:
+        raise KeyError(f"unknown cell mode {mode!r}")
+    CELL_MODE = mode
+    GLYPH_CELL_W, GLYPH_CELL_H, GLYPH_FONT_SIZE = CELL_PRESETS[mode]
+    return CELL_PRESETS[mode]
 
 RENDER_FPS = 60                # render cap; physics is independent of this
 FIXED_DT = 1.0 / 60.0          # physics step
@@ -31,6 +46,20 @@ PARALLAX_FACTORS = (0.12, 0.30, 0.55)
 BLOOM_SCALE = 8                # glow buffer is 1/8 screen resolution
 BLOOM_BLUR_PASSES = 2
 RENDER_PROFILE = False         # collect per-step timings when True
+
+# Quality toggles (visual only). Bloom and parallax take effect immediately;
+# the fog bank is baked into the parallax layers when Parallax is built, so
+# QUALITY_FOG is read at startup for the baked bank and per frame for the
+# drifting strips.
+QUALITY_BLOOM = True
+QUALITY_PARALLAX = True
+QUALITY_FOG = True
+
+# Entity readability. Sprites never dim below this light level, and every
+# entity gets a soft glow so it separates from the background.
+SPRITE_MIN_LIGHT = 0.45        # 0..1 floor for sprite lighting
+ENTITY_GLOW_RADIUS = 2.6       # multiples of the glyph cell width
+ENTITY_GLOW_STRENGTH = 0.42
 
 # ---------------------------------------------------------------------------
 # Physics (float cell units)
@@ -107,9 +136,15 @@ ENEMY_COLOR = (220, 70, 70)
 HIT_PARTICLE_COLORS = (WHITE, (255, 220, 120))
 DEATH_PARTICLE_COLORS = ((255, 90, 70), (255, 180, 80), WHITE)
 PLAYER_HURT_PARTICLE_COLORS = ((255, 80, 80), WHITE)
-HUD_HEALTH_COLOR = (255, 120, 120)
-HUD_HELP_COLOR = (110, 110, 130)
-HUD_CLEAR_COLOR = (255, 220, 120)
+
+# HUD: bigger font, brighter colours and a dark panel for contrast.
+HUD_FONT_SIZE = 16
+HUD_PANEL_COLOR = (16, 18, 30, 215)
+HUD_HEALTH_COLOR = (255, 96, 96)
+HUD_HELP_COLOR = (205, 210, 235)
+HUD_CLEAR_COLOR = (255, 226, 130)
+HUD_TEXT_OUTLINE = (0, 0, 0)
+HUD_OVERLAY_COLOR = (170, 235, 170)
 
 # ---------------------------------------------------------------------------
 # Enemy types

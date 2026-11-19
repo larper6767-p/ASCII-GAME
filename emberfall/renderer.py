@@ -19,13 +19,13 @@ import pygame
 from . import config, fx
 from . import sprites as ascii_sprites
 from .bloom import Bloom
-from .glyphs import GlyphLibrary, quantize_color, tint
+from .glyphs import GlyphLibrary, load_font_path, quantize_color, tint
 from .parallax import LightLayer, Parallax
 from .sprite_pipeline import SpriteLibrary
 
 PHASES = (
     "clear", "parallax", "lighting", "terrain", "sprites",
-    "particles", "hud", "flush", "bloom", "present",
+    "particles", "hud", "overlay", "flush", "bloom", "present",
 )
 
 
@@ -73,6 +73,7 @@ class Renderer:
         self.world_tile_w = self.cw * self.sub
         self.world_tile_h = self.ch * self.sub
         self.profile = profile
+        self._profile_default = profile
 
         self.screen = pygame.display.set_mode(
             (self.sub_cols * self.cw, self.sub_rows * self.ch)
@@ -116,6 +117,18 @@ class Renderer:
         }
         self._ox = 0
 
+        # F3 debug overlay: real frame time (set by the engine each frame)
+        # plus the per-step costs collected while the overlay is enabled.
+        self.overlay_enabled = False
+        self.frame_ms = 0.0
+        self._frame_ms_ema = None
+        self.hud_font = pygame.font.Font(load_font_path(),
+                                         config.HUD_FONT_SIZE)
+        self.hud_font.set_bold(True)
+        self.overlay_font = pygame.font.Font(load_font_path(), 13)
+        self._text_cache = {}
+        self._panel_cache = {}
+
     # ------------------------------------------------------------------
     # Timing helpers
     # ------------------------------------------------------------------
@@ -150,6 +163,24 @@ class Renderer:
         self.last_times = dict(self.frame_times)
         self.frame_index += 1
 
+    def note_frame(self, frame_ms):
+        """Record the real wall-clock frame time measured by the engine."""
+        self.frame_ms = frame_ms
+        if self._frame_ms_ema is None:
+            self._frame_ms_ema = frame_ms
+        else:
+            self._frame_ms_ema += (frame_ms - self._frame_ms_ema) * 0.1
+
+    def toggle_overlay(self):
+        """F3: show/hide the frame-time and per-step overlay."""
+        self.overlay_enabled = not self.overlay_enabled
+        # Per-step costs need the profiler; tie it to the overlay unless the
+        # user asked for profiling permanently via config or the constructor.
+        if not config.RENDER_PROFILE:
+            self.profile = (self.overlay_enabled
+                            or self._profile_default)
+        return self.overlay_enabled
+
     # ------------------------------------------------------------------
     # Background / terrain
     # ------------------------------------------------------------------
@@ -169,7 +200,7 @@ class Renderer:
                 return (108, 73, 43, 255)
             return (66, 44, 29, 255)
         if tile == '"':
-            return (24, 54, 29, 150)
+            return (36, 84, 46, 175)
         # Empty cells stay almost transparent so the parallax and fog layer
         # remain visible; a dark veil ties the room together.
         return (10, 12, 22, 48)
@@ -399,6 +430,8 @@ class Renderer:
     # ------------------------------------------------------------------
     def draw_parallax(self, camera_offset, world_time=0.0):
         with self._phase("parallax"):
+            if not config.QUALITY_PARALLAX:
+                return  # begin_frame already cleared the screen to BG
             self.parallax.draw(
                 self.screen,
                 int(round(camera_offset * self.world_tile_w)),
@@ -449,6 +482,10 @@ class Renderer:
         light = self.light_layer.level_px(
             centre_x, centre_y, self.cw, self.ch
         )
+        # Readability floor: entities never sink into the dark completely.
+        floor = int(config.SPRITE_MIN_LIGHT * 255)
+        if light < floor:
+            light = floor
         tint_rgb = self.light_layer.tint(light)
         style_cache = self._style_cache
         batch = self._fg_batch
@@ -510,6 +547,20 @@ class Renderer:
                     color_override=state_color,
                     flash=enemy.flash > 0.0,
                 )
+                if config.ENTITY_GLOW_STRENGTH > 0.0:
+                    # Soft glow keeps enemies separated from the background.
+                    gx, gy = self._world_px(
+                        enemy.x + enemy.w / 2.0,
+                        enemy.y + enemy.h / 2.0,
+                        camera_offset,
+                    )
+                    glow_color = state_color or data["color"]
+                    self.bloom.add(
+                        gx, gy,
+                        self.cw * config.ENTITY_GLOW_RADIUS,
+                        glow_color,
+                        config.ENTITY_GLOW_STRENGTH,
+                    )
                 if enemy.telegraph:
                     px, py = self._world_px(
                         enemy.x + enemy.w / 2.0, enemy.y - 1.0, camera_offset
@@ -663,28 +714,124 @@ class Renderer:
                 self._fg_batch.clear()
 
     def end_frame(self):
+        self.draw_overlay()
         self.flush()
         with self._phase("bloom"):
-            self.bloom.finish(self.screen)
+            if config.QUALITY_BLOOM:
+                self.bloom.finish(self.screen)
+
+    # ------------------------------------------------------------------
+    # HUD / overlay (rendered at real font sizes, not cell sizes)
+    # ------------------------------------------------------------------
+    def _text_surface(self, text, color, font=None, outline=True,
+                      cache=True):
+        font = font or self.hud_font
+        key = (text, color, id(font), outline)
+        if cache:
+            cached = self._text_cache.get(key)
+            if cached is not None:
+                return cached
+        base = font.render(text, True, color)
+        if outline:
+            pad = 1
+            surf = pygame.Surface(
+                (base.get_width() + pad * 2, base.get_height() + pad * 2),
+                pygame.SRCALPHA,
+            )
+            shadow = font.render(text, True, config.HUD_TEXT_OUTLINE)
+            for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                surf.blit(shadow, (pad + dx, pad + dy))
+            surf.blit(base, (pad, pad))
+        else:
+            surf = base
+        if cache:
+            self._text_cache[key] = surf
+        return surf
+
+    def _panel(self, w, h):
+        # Round overlay-sized panels so the cache stays bounded.
+        w = (max(8, w) + 15) // 16 * 16
+        h = (max(8, h) + 7) // 8 * 8
+        key = (w, h, config.HUD_PANEL_COLOR)
+        cached = self._panel_cache.get(key)
+        if cached is None:
+            cached = pygame.Surface((w, h), pygame.SRCALPHA)
+            cached.fill(config.HUD_PANEL_COLOR)
+            self._panel_cache[key] = cached
+        return cached
+
+    def _hud_block(self, x, y, text, color, font=None):
+        """Append a dark panel plus outlined text; returns the block height."""
+        surf = self._text_surface(text, color, font)
+        pad_x, pad_y = 8, 5
+        panel = self._panel(surf.get_width() + pad_x * 2,
+                            surf.get_height() + pad_y * 2)
+        self._fg_batch.append((panel, (x, y)))
+        self._fg_batch.append((surf, (x + pad_x, y + pad_y)))
+        return panel.get_height()
 
     def draw_hud(self, player, enemies):
         with self._phase("hud"):
-            self.put_text(
-                2, 1,
-                "HP [" + "#" * player.hp + "-" * (player.max_hp - player.hp) + "]",
-                config.HUD_HEALTH_COLOR,
-            )
-            self.put_text(
-                2, 2,
-                "A/D move  S+J pogo  SPACE jump  J attack  R restart",
+            hp_text = ("HP [" + "#" * player.hp
+                       + "-" * (player.max_hp - player.hp) + "]")
+            y = 8
+            y += self._hud_block(10, y, hp_text, config.HUD_HEALTH_COLOR) + 4
+            self._hud_block(
+                10, y,
+                "A/D move  S+J pogo  SPACE jump  J attack  F3 stats  R restart",
                 config.HUD_HELP_COLOR,
             )
             if not enemies:
-                self.put_text(
-                    max(0, self.sub_cols // 2 - 9), 6,
-                    "ALL ENEMIES SLAIN",
-                    config.HUD_CLEAR_COLOR,
+                surf = self._text_surface("ALL ENEMIES SLAIN",
+                                          config.HUD_CLEAR_COLOR)
+                x = (self._screen_size[0] - surf.get_width()) // 2 - 8
+                y = int(self._screen_size[1] * 0.30)
+                self._fg_batch.append(
+                    (self._panel(surf.get_width() + 16,
+                                 surf.get_height() + 10), (x, y))
                 )
+                self._fg_batch.append((surf, (x + 8, y + 5)))
+
+    def draw_overlay(self):
+        """F3 overlay: real frame time plus every per-step cost."""
+        with self._phase("overlay"):
+            if not self.overlay_enabled:
+                return
+            ema = self._frame_ms_ema or self.frame_ms
+            fps = 1000.0 / max(ema, 0.001)
+            step = 5
+            mid = (len(PHASES) + step - 1) // step
+            lines = [
+                (f"FRAME {self.frame_ms:5.1f} ms   EMA {ema:5.1f} ms   "
+                 f"{fps:5.1f} FPS"),
+                "  ".join(f"{name} {self.last_times.get(name, 0.0):.2f}"
+                          for name in PHASES[:mid]),
+                "  ".join(f"{name} {self.last_times.get(name, 0.0):.2f}"
+                          for name in PHASES[mid:]),
+                (f"blits {self.stats['glyph_blits']}   "
+                 f"sprite cells {self.stats['sprite_cells']}   "
+                 f"terrain cells {self.stats['terrain_cells']}"),
+                (f"cells {self.cw}x{self.ch}   window "
+                 f"{self._screen_size[0]}x{self._screen_size[1]}   "
+                 f"frame {self.frame_index}"),
+            ]
+            font = self.overlay_font
+            rendered = [
+                self._text_surface(line, config.HUD_OVERLAY_COLOR, font,
+                                   outline=False, cache=False)
+                for line in lines
+            ]
+            width = max(s.get_width() for s in rendered) + 16
+            height = sum(s.get_height() for s in rendered) + 8 * (
+                len(rendered) + 1
+            )
+            x = self._screen_size[0] - width - 10
+            y = 10
+            self._fg_batch.append((self._panel(width, height), (x, y)))
+            y += 8
+            for surf in rendered:
+                self._fg_batch.append((surf, (x + 8, y)))
+                y += surf.get_height() + 8
 
     def clear(self, color=config.BG):
         self.screen.fill(color)

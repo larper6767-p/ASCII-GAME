@@ -416,6 +416,89 @@ def budget_test(renderer):
     return ok
 
 
+def debug_features_tests(renderer):
+    print("Debug overlay, quality toggles and cell presets:")
+    ok = True
+
+    # F3 overlay: enabling turns on profiling and reports frame time.
+    renderer.note_frame(16.7)
+    was_profile = renderer.profile
+    enabled = renderer.toggle_overlay()
+    ok &= check(
+        "F3 overlay toggles on and enables profiling",
+        enabled and renderer.overlay_enabled and renderer.profile,
+    )
+    session = GameSession(seed=7)
+    inp = InputState()
+    stepper = FixedStepper(session)
+    for _ in range(3):
+        stepper.advance(config.FIXED_DT, inp)
+        session.draw(renderer)
+        renderer.flip()
+    ok &= check(
+        "overlay collects per-step timings while enabled",
+        renderer.last_times.get("overlay", 0.0) >= 0.0
+        and renderer.frame_ms == 16.7,
+        f"overlay={renderer.last_times.get('overlay', 0.0):.3f} ms",
+    )
+    disabled = renderer.toggle_overlay()
+    ok &= check(
+        "overlay toggles back off",
+        not disabled and not renderer.overlay_enabled
+        and renderer.profile == was_profile,
+    )
+
+    # Quality toggles are runtime-switchable and visual only.
+    config.QUALITY_BLOOM = False
+    session.draw(renderer)
+    renderer.flip()
+    bloom_off = renderer.bloom.stats["glows"]
+    config.QUALITY_BLOOM = True
+    session.draw(renderer)
+    renderer.flip()
+    bloom_on = renderer.bloom.stats["glows"]
+    ok &= check(
+        "QUALITY_BLOOM skips the glow pass when off",
+        bloom_off == 0 and bloom_on > 0,
+        f"off={bloom_off} on={bloom_on}",
+    )
+
+    config.QUALITY_PARALLAX = False
+    offsets_before = list(renderer.parallax.last_offsets)
+    renderer.draw_parallax(50, 0.0)          # would scroll if drawn
+    offsets_untouched = list(renderer.parallax.last_offsets)
+    config.QUALITY_PARALLAX = True
+    renderer.draw_parallax(50, 0.0)
+    offsets_drawn = list(renderer.parallax.last_offsets)
+    ok &= check(
+        "QUALITY_PARALLAX skips layer blits when off",
+        offsets_untouched == offsets_before
+        and offsets_drawn != offsets_before
+        and offsets_drawn[0] < offsets_drawn[1] < offsets_drawn[2],
+        f"off={offsets_untouched} on={offsets_drawn}",
+    )
+
+    # Cell presets: switching changes cell size and window, physics does not.
+    old_mode = config.CELL_MODE
+    try:
+        w, h, font = config.set_cell_mode("8x14")
+        big = Renderer(profile=False)
+        ok &= check(
+            "8x14 preset produces 8x14 cells at font size 12",
+            (big.cw, big.ch) == (8, 14) and font == 12
+            and big.pixel_size == (1600, 784),
+            f"{big.cw}x{big.ch} window={big.pixel_size}",
+        )
+        ok &= check(
+            "preset switch leaves physics constants untouched",
+            config.COLS == 100 and config.ROWS == 28
+            and config.RUN_SPEED == 28.0,
+        )
+    finally:
+        config.set_cell_mode(old_mode)
+    return ok
+
+
 def main():
     print("Emberfall Renderer v2 tests")
     pygame.init()
@@ -429,6 +512,7 @@ def main():
             parallax_bloom_tests(renderer),
             draw_scene_tests(renderer),
             physics_isolation_test(renderer),
+            debug_features_tests(renderer),
             budget_test(renderer),
         ]
         ok = all(results)

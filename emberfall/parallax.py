@@ -80,13 +80,16 @@ class Parallax:
                 y = rng.randrange(max(1, horizon - 3), max(2, h - 1))
                 s.set_at((x, y), (120, 92, 90, 150))
         else:
-            # Near silhouettes frame the play area and add depth.
+            # Near silhouettes stay in the bottom corners: short, semi-
+            # transparent wedges that frame the play area without ever
+            # covering it (an earlier version grew to full height and read
+            # as a black rectangle bug).
             s.fill((8, 9, 15, 0))
             for side in (0, 1):
-                for _ in range(7):
+                for _ in range(4):
                     base_x = 0 if side == 0 else w
-                    width = rng.randint(max(3, w // 12), max(6, w // 6))
-                    height = rng.randint(max(8, h // 4), max(12, h - 2))
+                    width = rng.randint(max(3, w // 16), max(6, w // 10))
+                    height = rng.randint(max(6, h // 12), max(8, h // 5))
                     sign = 1 if side == 0 else -1
                     pts = [(base_x, h), (base_x, h - height)]
                     x = base_x
@@ -95,7 +98,7 @@ class Parallax:
                         y = h - height + rng.randint(-height // 5, height // 4)
                         pts.append((x, y))
                     pts.append((base_x + sign * width, h))
-                    pygame.draw.polygon(s, (5, 6, 11, 230), pts)
+                    pygame.draw.polygon(s, (5, 6, 11, 110), pts)
             # A few warm embers in the near layer.
             for _ in range(28):
                 x = rng.randrange(w)
@@ -105,6 +108,10 @@ class Parallax:
     def _build(self):
         for depth, factor in enumerate(self.factors):
             self._new_layer(factor, depth)
+
+        if not config.QUALITY_FOG:
+            # Quality toggle off: no fog bank, no drifting strips.
+            return
 
         # A cached vertical fog bank. Alpha is stronger low in the frame.
         fog = pygame.Surface((self.screen_w, self.screen_h), pygame.SRCALPHA)
@@ -149,12 +156,13 @@ class Parallax:
         screen.blits(batch, doreturn=False)
 
         # The fog bank is baked into the distant layers; only the slow
-        # drifting strips remain as separate alpha blits.
-        for index, strip in enumerate(self.fog_strips):
-            factor = 0.06 + index * 0.035
-            ox = int(camera_offset_px * factor) % max(1, strip.get_width() // 2)
-            y = int(self.screen_h * (0.38 + index * 0.27))
-            screen.blit(strip, (-ox, y))
+        # drifting strips remain as separate alpha blits (runtime toggle).
+        if config.QUALITY_FOG:
+            for index, strip in enumerate(self.fog_strips):
+                factor = 0.06 + index * 0.035
+                ox = int(camera_offset_px * factor) % max(1, strip.get_width() // 2)
+                y = int(self.screen_h * (0.38 + index * 0.27))
+                screen.blit(strip, (-ox, y))
 
 
 class LightLayer:
