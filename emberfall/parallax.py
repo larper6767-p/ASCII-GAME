@@ -13,6 +13,22 @@ import pygame
 from . import config
 
 
+def _normalized(color):
+    """Scale a colour so its brightest channel hits 255 (hue-only tint)."""
+    peak = max(1, max(color))
+    scale = 255.0 / peak
+    return tuple(min(255, int(c * scale)) for c in color)
+
+
+def _tint_surface(surface, color):
+    """Multiply a surface's RGB by a normalised colour, preserving alpha."""
+    surface.fill(_normalized(color), special_flags=pygame.BLEND_RGB_MULT)
+
+
+def _mix(a, b, t):
+    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
+
+
 class Parallax:
     def __init__(self, screen_w, screen_h, world_tile_w,
                  level_width=config.DEMO_LEVEL_WIDTH):
@@ -25,6 +41,34 @@ class Parallax:
         self.fog_overlay = None
         self.fog_strips = []
         self.last_offsets = []
+        self.atmosphere = None
+        self.atmosphere_key = None
+        self.set_atmosphere(None)
+
+    # ------------------------------------------------------------------
+    def set_atmosphere(self, atmosphere):
+        """Rebuild the cached layers for a room palette and fog density.
+
+        Called when the active room changes; the cost is hidden by the door
+        fade. Re-applying the same palette is a no-op.
+        """
+        if atmosphere is None:
+            atmosphere = config.default_atmosphere()
+        key = (
+            atmosphere.get("sky", config.ATMO_SKY),
+            atmosphere.get("rock", config.ATMO_ROCK),
+            atmosphere.get("accent", config.ATMO_ACCENT),
+            atmosphere.get("fog", config.ATMO_FOG),
+            atmosphere.get("ember", config.ATMO_EMBER),
+        )
+        if key == self.atmosphere_key:
+            return
+        self.atmosphere_key = key
+        self.atmosphere = atmosphere
+        self.layers.clear()
+        self.fog_strips.clear()
+        self.fog_overlay = None
+        self.last_offsets.clear()
         self._build()
 
     # ------------------------------------------------------------------
@@ -35,6 +79,23 @@ class Parallax:
         low_h = max(24, self.screen_h // 3 + 2)
         low = pygame.Surface((low_w, low_h), pygame.SRCALPHA)
         self._paint_layer(low, low_w, low_h, depth)
+        # Tint the pre-rendered depth art towards the room palette. The near
+        # layer is tinted with the sky so its silhouettes read as shadowed
+        # rock, then its ember specks are repainted in the room ember colour.
+        if depth == 0:
+            tint_color = self.atmosphere["sky"]
+        elif depth == 1:
+            tint_color = self.atmosphere["rock"]
+        else:
+            tint_color = self.atmosphere["sky"]
+        _tint_surface(low, tint_color)
+        if depth == 2:
+            rng = random.Random(90210 + depth * 37 + 1)
+            ember = self.atmosphere["ember"]
+            for _ in range(28):
+                x = rng.randrange(low_w)
+                y = rng.randrange(low_h)
+                low.set_at((x, y), (ember[0], ember[1], ember[2], 120))
         full = pygame.transform.scale(low, (width, self.screen_h))
         self.layers.append((factor, full, depth))
 
@@ -99,26 +160,27 @@ class Parallax:
                         pts.append((x, y))
                     pts.append((base_x + sign * width, h))
                     pygame.draw.polygon(s, (5, 6, 11, 110), pts)
-            # A few warm embers in the near layer.
-            for _ in range(28):
-                x = rng.randrange(w)
-                y = rng.randrange(0, h)
-                s.set_at((x, y), (190, 82, 44, 120))
 
     def _build(self):
         for depth, factor in enumerate(self.factors):
             self._new_layer(factor, depth)
 
-        if not config.QUALITY_FOG:
-            # Quality toggle off: no fog bank, no drifting strips.
+        density = max(
+            0.0, min(1.0, self.atmosphere.get("fog", config.ATMO_FOG))
+        )
+        if not config.QUALITY_FOG or density <= 0.0:
+            # Quality toggle off (or a clear room): no fog bank or strips.
             return
 
+        fog_color = _mix(self.atmosphere["rock"], (150, 158, 184), 0.35)
         # A cached vertical fog bank. Alpha is stronger low in the frame.
         fog = pygame.Surface((self.screen_w, self.screen_h), pygame.SRCALPHA)
         for y in range(self.screen_h):
             t = y / max(1, self.screen_h - 1)
-            alpha = int(18 + 70 * (t ** 1.7))
-            pygame.draw.line(fog, (70, 78, 105, alpha),
+            alpha = int((18 + 70 * (t ** 1.7)) * density)
+            if alpha <= 0:
+                continue
+            pygame.draw.line(fog, (*fog_color, alpha),
                              (0, y), (self.screen_w, y))
         self.fog_overlay = fog
         # Bake the static fog bank into the opaque distant layers. This keeps
@@ -133,16 +195,22 @@ class Parallax:
             strip = pygame.Surface((self.screen_w * 2, self.screen_h // 3),
                                    pygame.SRCALPHA)
             rng = random.Random(4242 + index)
+            drawn = False
             for _ in range(18):
                 x = rng.randrange(-self.screen_w // 4, self.screen_w * 2)
                 y = rng.randrange(0, self.screen_h // 3)
                 rx = rng.randrange(self.screen_w // 8, self.screen_w // 2)
                 ry = rng.randrange(3, max(4, self.screen_h // 30))
+                alpha = int(rng.randrange(18, 40) * density)
+                if alpha <= 0:
+                    continue
                 pygame.draw.ellipse(
-                    strip, (108, 112, 140, rng.randrange(18, 40)),
+                    strip, (*fog_color, alpha),
                     (x - rx // 2, y - ry // 2, rx, ry),
                 )
-            self.fog_strips.append(strip)
+                drawn = True
+            if drawn:
+                self.fog_strips.append(strip)
 
     # ------------------------------------------------------------------
     def draw(self, screen, camera_offset_px):

@@ -3,9 +3,16 @@
 #   =   platform
 #   "   decorative grass (on top of solid ground)
 #   .   empty air
+#   T   torch / fire (non-solid, emits flickering light)
 #
 # Metadata (after a line containing only ---):
 #   spawn X Y
 #   enemy <type> X Y     (type: crawler, flyer, spitter)
 #   door <side> <dest_room> <dest_spawn_side>
 #       side / dest_spawn_side: left, right, top, bottom
+#   atmosphere <name>    (label for the room mood)
+#   palette <sky> <rock> <accent>
+#       three #rrggbb colours: sky fill, terrain tint, torch/accent glow
+#   fog <0.0..1.0>       (fog density; 0 disables the bank and strips)
+#   ember <#rrggbb>      (ambient ember mote colour)
+#   lock_on_enter        (seal every door until the room is cleared)

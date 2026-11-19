@@ -20,13 +20,13 @@ from emberfall import config
 from emberfall import physics
 from emberfall.input import InputState
 from emberfall.renderer import Renderer
-from emberfall.rooms import (RoomError, load_room, load_room_by_id)
+from emberfall.rooms import (LEGEND, RoomError, load_room, load_room_by_id)
 from emberfall.session import GameSession
 
 CHECKS = 0
 FAILURES = []
 
-LEGEND_CHARS = set('#=". ')
+LEGEND_CHARS = set(LEGEND)
 
 
 def check(name, condition, detail=""):

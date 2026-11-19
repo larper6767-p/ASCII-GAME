@@ -8,6 +8,11 @@ Metadata lines:
     spawn X Y
     enemy <type> X Y
     door <side> <dest_room> <dest_spawn_side>
+    atmosphere <name>
+    palette <sky_hex> <rock_hex> <accent_hex>
+    fog <0.0..1.0>
+    ember <hex>
+    lock_on_enter
 
 Malformed rooms raise :class:`RoomError` with the file name and the exact
 problem (ragged rows, missing spawn, unknown door destination, ...).
@@ -31,6 +36,7 @@ LEGEND = {
     '"': "decorative grass",
     ".": "empty air",
     " ": "empty air",
+    "T": "torch / fire (non-solid, emits flickering light)",
 }
 
 VALID_SIDES = ("left", "right", "top", "bottom")
@@ -41,12 +47,15 @@ class RoomError(ValueError):
 
 
 class Room(Level):
-    """A Level with door metadata and a stable id."""
+    """A Level with door, atmosphere and lock metadata and a stable id."""
 
-    def __init__(self, room_id, tiles, enemy_spawns, player_spawn, doors):
+    def __init__(self, room_id, tiles, enemy_spawns, player_spawn, doors,
+                 atmosphere=None, lock_on_enter=False):
         super().__init__(tiles, enemy_spawns, player_spawn)
         self.id = room_id
         self.doors = doors
+        self.atmosphere = atmosphere or config.default_atmosphere()
+        self.lock_on_enter = bool(lock_on_enter)
 
 
 def _door_rect(side, w, h):
@@ -72,6 +81,28 @@ def _parse_pair(parts, path, what):
         raise RoomError(
             f"{path.name}: {what} needs numeric X Y, got "
             f"{' '.join(parts[1:])!r}"
+        ) from exc
+
+
+def _parse_hex(value, path, what):
+    text = value.strip()
+    if text.startswith("#"):
+        text = text[1:]
+    elif text.lower().startswith("0x"):
+        text = text[2:]
+    if len(text) != 6:
+        raise RoomError(
+            f"{path.name}: {what} must be a #rrggbb colour, got {value!r}"
+        )
+    try:
+        return (
+            int(text[0:2], 16),
+            int(text[2:4], 16),
+            int(text[4:6], 16),
+        )
+    except ValueError as exc:
+        raise RoomError(
+            f"{path.name}: {what} must be a #rrggbb colour, got {value!r}"
         ) from exc
 
 
@@ -117,6 +148,8 @@ def _parse_metadata(meta_lines, path, width, height):
     enemy_spawns = []
     player_spawn = None
     door_specs = []
+    atmosphere = config.default_atmosphere()
+    lock_on_enter = False
 
     for raw in meta_lines:
         line = raw.strip()
@@ -164,6 +197,54 @@ def _parse_metadata(meta_lines, path, width, height):
                     f"be one of {', '.join(VALID_SIDES)}"
                 )
             door_specs.append((side, dest, dest_side))
+        elif command == "atmosphere":
+            if len(parts) != 2:
+                raise RoomError(
+                    f"{path.name}: 'atmosphere' needs a name, got {line!r}"
+                )
+            atmosphere["name"] = parts[1]
+        elif command == "palette":
+            if len(parts) != 4:
+                raise RoomError(
+                    f"{path.name}: 'palette' needs <sky> <rock> <accent> "
+                    f"hex colours, got {line!r}"
+                )
+            atmosphere["sky"] = _parse_hex(parts[1], path, "palette sky")
+            atmosphere["rock"] = _parse_hex(parts[2], path, "palette rock")
+            atmosphere["accent"] = _parse_hex(
+                parts[3], path, "palette accent"
+            )
+        elif command == "fog":
+            if len(parts) != 2:
+                raise RoomError(
+                    f"{path.name}: 'fog' needs a density, got {line!r}"
+                )
+            try:
+                density = float(parts[1])
+            except ValueError as exc:
+                raise RoomError(
+                    f"{path.name}: fog density must be a number, "
+                    f"got {parts[1]!r}"
+                ) from exc
+            if not math.isfinite(density) or not 0.0 <= density <= 1.0:
+                raise RoomError(
+                    f"{path.name}: fog density must be between 0.0 and 1.0, "
+                    f"got {density:g}"
+                )
+            atmosphere["fog"] = density
+        elif command == "ember":
+            if len(parts) != 2:
+                raise RoomError(
+                    f"{path.name}: 'ember' needs a hex colour, got {line!r}"
+                )
+            atmosphere["ember"] = _parse_hex(parts[1], path, "ember")
+        elif command == "lock_on_enter":
+            if len(parts) != 1:
+                raise RoomError(
+                    f"{path.name}: 'lock_on_enter' takes no arguments, "
+                    f"got {line!r}"
+                )
+            lock_on_enter = True
         else:
             raise RoomError(
                 f"{path.name}: unknown metadata command {command!r}"
@@ -186,7 +267,7 @@ def _parse_metadata(meta_lines, path, width, height):
         "dest_side": dest_side,
         "rect": _door_rect(side, width, height),
     } for side, dest, dest_side in door_specs]
-    return enemy_spawns, player_spawn, doors
+    return enemy_spawns, player_spawn, doors, atmosphere, lock_on_enter
 
 
 def _validate_spawns(room, path):
@@ -235,10 +316,13 @@ def load_room(path):
     tiles = _parse_grid(grid_lines, path)
     height = len(tiles)
     width = len(tiles[0])
-    enemy_spawns, player_spawn, doors = _parse_metadata(
-        meta_lines, path, width, height
+    enemy_spawns, player_spawn, doors, atmosphere, lock_on_enter = (
+        _parse_metadata(meta_lines, path, width, height)
     )
-    room = Room(path.stem, tiles, enemy_spawns, player_spawn, doors)
+    room = Room(
+        path.stem, tiles, enemy_spawns, player_spawn, doors,
+        atmosphere, lock_on_enter,
+    )
     _validate_spawns(room, path)
     return room
 

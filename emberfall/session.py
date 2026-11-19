@@ -37,6 +37,7 @@ class GameSession:
         self.transition = None
         self._pending_cache_warm = None
         self._door_cooldown = 0.0
+        self.room_locked = False
         self.reset()
 
     def _dead_here(self):
@@ -55,6 +56,9 @@ class GameSession:
     def reset(self):
         """Respawn the player and (non-killed) enemies. World time keeps running."""
         self._spawn_enemies()
+        self.room_locked = bool(
+            getattr(self.level, "lock_on_enter", False) and self.enemies
+        )
         px, py = self.level.player_spawn
         px, py = self._safe_spawn(px, py, self.enemies)
         self.player = Player(px, py)
@@ -101,6 +105,8 @@ class GameSession:
     def _check_doors(self):
         if self.transition is not None or self._door_cooldown > 0.0:
             return
+        if self.room_locked:
+            return
         doors = getattr(self.level, "doors", None)
         if not doors:
             return
@@ -146,6 +152,9 @@ class GameSession:
         self.room_id = room_id
         self.level = load_room_by_id(room_id)
         self._spawn_enemies()
+        self.room_locked = bool(
+            getattr(self.level, "lock_on_enter", False) and self.enemies
+        )
         inward = 1 if side == "left" else (-1 if side == "right" else 0)
         base_x, base_y = self._spawn_for_side(side, self.level)
         spawn_x, spawn_y = self._safe_spawn(
@@ -242,6 +251,9 @@ class GameSession:
                             self._dead_here().add(enemy.spawn_index)
                         enemy.death_burst(self.particles)
                         self.enemies.remove(enemy)
+                        if not self.enemies:
+                            # Boss-arena doors unlock on the final kill.
+                            self.room_locked = False
 
         # Projectiles: moving shots never interact with the sword.
         self.projectiles.update(dt, self.level)
@@ -282,6 +294,8 @@ class GameSession:
     # Drawing
     # ------------------------------------------------------------------
     def draw(self, renderer):
+        # Apply the room palette before any cached layers are prepared.
+        renderer.set_atmosphere(self.level)
         p = self.player
         ox = self.camera.offset + self.shake.x_offset()
 
@@ -295,16 +309,19 @@ class GameSession:
         renderer.begin_frame(ox)
         renderer.draw_parallax(ox, self.time)
         renderer.update_lighting(
-            p, self.enemies, self.projectiles, ox
+            p, self.enemies, self.projectiles, ox, self.time, self.level
         )
         renderer.draw_terrain(self.level, ox, self.time, p)
-        renderer.draw_doors(self.level, ox, self.time)
+        renderer.draw_doors(
+            self.level, ox, self.time, locked=self.room_locked
+        )
         renderer.draw_enemies(self.enemies, ox)
         renderer.draw_player(p, ox, self.time)
         renderer.draw_projectiles(self.projectiles, ox)
         renderer.draw_slash(p, ox)
         renderer.draw_particles(self.particles, ox)
-        renderer.draw_hud(p, self.enemies)
+        renderer.draw_ambient(ox, self.time)
+        renderer.draw_hud(p, self.enemies, locked=self.room_locked)
         renderer.end_frame()
 
         # Fade overlay on top of everything during a transition.
