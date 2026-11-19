@@ -93,10 +93,7 @@ def main():
             110, 28,
             platforms=[(6, 21, 8), (18, 17, 8), (32, 21, 8), (46, 16, 9),
                        (62, 21, 8), (78, 17, 9), (94, 21, 8)],
-            enemies=[("crawler", 15, 22), ("flyer", 20, 14),
-                     ("spitter", 41, 22), ("crawler", 27, 22),
-                     ("flyer", 30, 13), ("crawler", 68, 22),
-                     ("flyer", 84, 13), ("spitter", 98, 22)],
+            enemies=[("boss", 72, 21)],
             doors=[("left", "room2", "right")],
             spawns=[(4, 22)],
             torches=[(9, 24), (21, 16), (31, 24), (56, 24),
@@ -126,7 +123,7 @@ def main():
 #
 # Metadata (after a line containing only ---):
 #   spawn X Y
-#   enemy <type> X Y     (type: crawler, flyer, spitter)
+#   enemy <type> X Y     (type: crawler, flyer, spitter, boss)
 #   door <side> <dest_room> <dest_spawn_side>
 #       side / dest_spawn_side: left, right, top, bottom
 #   atmosphere <name>    (label for the room mood)

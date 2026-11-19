@@ -354,6 +354,8 @@ class GameSession:
 
         for enemy in self.enemies:
             enemy.update(dt, self.level, p, self.projectiles)
+            for event in getattr(enemy, "consume_events", lambda: [])():
+                self._handle_enemy_event(event)
         if self.room_locked:
             self._sealed_room_failsafe(dt)
 
@@ -364,6 +366,9 @@ class GameSession:
             for enemy in list(self.enemies):
                 if enemy not in p.hit_set and overlap(attack_box, enemy.rect):
                     p.hit_set.add(enemy)
+                    if getattr(enemy, "invulnerable", False):
+                        # The boss intro is a visible no-damage window.
+                        continue
                     combat.damage_enemy(enemy, p.facing)
                     if p.pogo:
                         p.pogo_bounce()
@@ -415,6 +420,28 @@ class GameSession:
             config.PLAYER_HURT_PARTICLE_COLORS,
         )
 
+    def _handle_enemy_event(self, event):
+        """Apply boss impact feedback without coupling the boss to the session."""
+        kind = event.get("type")
+        x = event.get("x", self.player.x)
+        y = event.get("y", self.player.y)
+        if kind == "slam":
+            self.shake.trigger(config.HURT_SHAKE * 2.2)
+            self.particles.burst(
+                x, y, 24, config.DEATH_PARTICLE_COLORS, speed=18.0
+            )
+        elif kind == "phase":
+            self.shake.trigger(config.HURT_SHAKE * 2.8)
+            self.particles.burst(
+                x, y, 42,
+                config.DEATH_PARTICLE_COLORS + ((255, 230, 160),),
+                speed=24.0,
+            )
+        elif kind == "charge_stop":
+            self.shake.trigger(config.HIT_SHAKE)
+        elif kind == "rain_start":
+            self.shake.trigger(config.HIT_SHAKE)
+
     # ------------------------------------------------------------------
     # Drawing
     # ------------------------------------------------------------------
@@ -440,6 +467,7 @@ class GameSession:
         renderer.draw_doors(
             self.level, ox, self.time, locked=self.room_locked
         )
+        renderer.draw_boss_warnings(self.enemies, ox, self.time)
         renderer.draw_enemies(self.enemies, ox)
         renderer.draw_player(p, ox, self.time)
         renderer.draw_projectiles(self.projectiles, ox)

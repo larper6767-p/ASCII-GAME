@@ -18,6 +18,7 @@ import pygame
 
 from emberfall import config
 from emberfall import physics
+from emberfall.boss import BossState
 from emberfall.input import InputState
 from emberfall.renderer import Renderer
 from emberfall.rooms import RoomError, load_room, load_room_by_id
@@ -248,24 +249,27 @@ def test_lock_on_enter():
     session = GameSession(seed=4, room_id="room3")
     idle = InputState()
     check("boss room starts locked", session.room_locked)
-    check("boss room has enemies", len(session.enemies) >= 3,
-          str(len(session.enemies)))
+    check("boss room has the boss", len(session.enemies) == 1
+          and session.enemies[0].kind == "boss",
+          str([e.kind for e in session.enemies]))
 
     session.player.x = 1.0
     session.player.y = session.level.player_spawn[1]
     session.update(config.FIXED_DT, idle)
     check("locked room ignores the door", session.transition is None)
 
-    # Killing the last enemy unlocks immediately (no reset needed).
+    # Killing the boss unlocks immediately (no reset needed). Skip the intro
+    # so this test exercises lock clearing, not the invulnerable window.
     total = len(session.level.enemy_spawns)
     session.room_killed.setdefault("room3", set()).update(range(1, total))
     session.reset()
-    check("one enemy remains", len(session.enemies) == 1,
+    check("one boss remains", len(session.enemies) == 1,
           str(len(session.enemies)))
     check("boss room is still locked with one enemy", session.room_locked)
 
     enemy = session.enemies[0]
     enemy.hp = 1
+    enemy.set_state(BossState.IDLE, 1.0)
     session.player.x = max(1.0, enemy.x - config.PLAYER_W)
     session.player.y = enemy.y
     session.player.facing = 1
@@ -390,12 +394,9 @@ def test_locked_room_death_reset():
     room = load_room_by_id("room3")
     total = len(room.enemy_spawns)
     session = GameSession(seed=26, room_id="room3")
-    killed = {0, 1}
-    session.room_killed["room3"] = set(killed)
     session.reset()
     check("arena locks with living enemies", session.room_locked)
-    check("death setup keeps killed enemies dead",
-          len(session.enemies) == total - len(killed))
+    check("death setup starts with the boss", len(session.enemies) == total)
 
     session.player.hp = 0
     session.update(config.FIXED_DT, InputState())
@@ -405,8 +406,7 @@ def test_locked_room_death_reset():
     check("death keeps the arena locked while enemies remain",
           session.room_locked)
     check("death respawns only the living enemies",
-          len(session.enemies) == total - len(killed)
-          and all(e.spawn_index not in killed for e in session.enemies))
+          len(session.enemies) == total)
     check("living enemies reset to their spawns",
           all((e.x, e.y) == session.level.enemy_spawns[e.spawn_index][1:]
               for e in session.enemies))

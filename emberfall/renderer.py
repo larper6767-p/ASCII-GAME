@@ -716,42 +716,74 @@ class Renderer:
                     batch.append((glyph, (cx, cy)))
                     self.stats["sprite_cells"] += 1
 
+    def _draw_boss(self, boss, camera_offset):
+        """Draw the large glyph boss directly (no fixed sprite-sheet frame)."""
+        px, py = self._world_px(boss.x, boss.y, camera_offset)
+        art_w = len(ascii_sprites.BOSS_FRAME[0]) * self.cw
+        art_h = len(ascii_sprites.BOSS_FRAME) * self.ch
+        if (px > self._screen_size[0] or px + art_w < 0
+                or py > self._screen_size[1] or py + art_h < 0):
+            return
+        color = (255, 245, 225) if boss.flash > 0.0 else boss.color
+        eye = (255, 246, 190)
+        for row, line in enumerate(ascii_sprites.BOSS_FRAME):
+            for col, char in enumerate(line):
+                if char == " ":
+                    continue
+                cell_color = eye if char == "o" else color
+                glyph = self.glyphs.surface(char, cell_color)
+                self._fg_batch.append(
+                    (glyph, (px + col * self.cw, py + row * self.ch))
+                )
+                self.stats["sprite_cells"] += 1
+        if config.ENTITY_GLOW_STRENGTH > 0.0:
+            gx, gy = self._world_px(
+                boss.x + boss.w / 2.0, boss.y + boss.h / 2.0, camera_offset
+            )
+            strength = 0.90 if getattr(boss, "phase_two", False) else 0.65
+            self.bloom.add(
+                gx, gy, self.cw * 7.0, boss.color, strength
+            )
+
     def draw_enemies(self, enemies, camera_offset):
         with self._phase("sprites"):
             for enemy in enemies:
-                data = enemy.data
-                state_color = None
-                if enemy.color != data["color"]:
-                    state_color = enemy.color
-                if enemy.kind == "crawler":
-                    frame_index = int(enemy.anim * data["anim_fps"]) % 2
-                    facing = getattr(enemy, "dir", 1)
-                elif enemy.kind == "flyer":
-                    frame_index = int(enemy.anim * data["anim_fps"]) % 2
-                    facing = enemy.facing
+                if getattr(enemy, "is_boss", False):
+                    self._draw_boss(enemy, camera_offset)
                 else:
-                    frame_index = int(enemy.anim * data["anim_fps"]) % 2
-                    facing = enemy.facing
-                frame = self.sprites.frame(enemy.kind, frame_index, facing)
-                self._draw_frame(
-                    frame, enemy.x, enemy.y, camera_offset,
-                    color_override=state_color,
-                    flash=enemy.flash > 0.0,
-                )
-                if config.ENTITY_GLOW_STRENGTH > 0.0:
-                    # Soft glow keeps enemies separated from the background.
-                    gx, gy = self._world_px(
-                        enemy.x + enemy.w / 2.0,
-                        enemy.y + enemy.h / 2.0,
-                        camera_offset,
+                    data = enemy.data
+                    state_color = None
+                    if enemy.color != data["color"]:
+                        state_color = enemy.color
+                    if enemy.kind == "crawler":
+                        frame_index = int(enemy.anim * data["anim_fps"]) % 2
+                        facing = getattr(enemy, "dir", 1)
+                    elif enemy.kind == "flyer":
+                        frame_index = int(enemy.anim * data["anim_fps"]) % 2
+                        facing = enemy.facing
+                    else:
+                        frame_index = int(enemy.anim * data["anim_fps"]) % 2
+                        facing = enemy.facing
+                    frame = self.sprites.frame(enemy.kind, frame_index, facing)
+                    self._draw_frame(
+                        frame, enemy.x, enemy.y, camera_offset,
+                        color_override=state_color,
+                        flash=enemy.flash > 0.0,
                     )
-                    glow_color = state_color or data["color"]
-                    self.bloom.add(
-                        gx, gy,
-                        self.cw * config.ENTITY_GLOW_RADIUS,
-                        glow_color,
-                        config.ENTITY_GLOW_STRENGTH,
-                    )
+                    if config.ENTITY_GLOW_STRENGTH > 0.0:
+                        # Soft glow keeps enemies separated from the background.
+                        gx, gy = self._world_px(
+                            enemy.x + enemy.w / 2.0,
+                            enemy.y + enemy.h / 2.0,
+                            camera_offset,
+                        )
+                        glow_color = state_color or data["color"]
+                        self.bloom.add(
+                            gx, gy,
+                            self.cw * config.ENTITY_GLOW_RADIUS,
+                            glow_color,
+                            config.ENTITY_GLOW_STRENGTH,
+                        )
                 if enemy.telegraph:
                     px, py = self._world_px(
                         enemy.x + enemy.w / 2.0, enemy.y - 1.0, camera_offset
@@ -790,6 +822,33 @@ class Renderer:
     def draw_projectiles(self, projectiles, camera_offset):
         with self._phase("sprites"):
             for projectile in projectiles.items:
+                kind = getattr(projectile, "kind", "shot")
+                if kind in ("shockwave", "ember"):
+                    px, py = self._world_px(
+                        projectile.x, projectile.y, camera_offset
+                    )
+                    cols = max(1, int(projectile.w))
+                    rows = max(1, int(projectile.h))
+                    char = "~" if kind == "shockwave" else projectile.char
+                    for row in range(rows):
+                        for col in range(cols):
+                            glyph = self.glyphs.surface(
+                                char, projectile.color
+                            )
+                            self._fg_batch.append(
+                                (glyph, (px + col * self.cw,
+                                         py + row * self.ch))
+                            )
+                            self.stats["sprite_cells"] += 1
+                    self.bloom.add(
+                        px + cols * self.cw // 2,
+                        py + rows * self.ch // 2,
+                        self.cw * (3.0 if kind == "shockwave" else 2.0),
+                        projectile.color,
+                        0.85,
+                    )
+                    continue
+
                 frame = self.sprites.frame("shot", 0, 1)
                 self._draw_frame(
                     frame, projectile.x, projectile.y, camera_offset,
@@ -802,7 +861,37 @@ class Renderer:
                     projectile.char, px, py,
                     (255, 255, 235), glow=True,
                 )
-                self.bloom.add(px, py, self.cw * 2.2, projectile.color, 1.0)
+
+    def draw_boss_warnings(self, enemies, camera_offset, world_time=0.0):
+        """Pulsing floor marks for telegraphed ember-rain impacts."""
+        with self._phase("sprites"):
+            base = config.BOSS_DATA["warning_color"]
+            for enemy in enemies:
+                for warning in getattr(enemy, "warnings", ()):
+                    px, py = self._world_px(
+                        warning["x"], warning["y"] - 1.0, camera_offset
+                    )
+                    if (px < -self.cw * 2 or px > self._screen_size[0]
+                            or py < -self.ch or py > self._screen_size[1]):
+                        continue
+                    pulse = 0.72 + 0.28 * (
+                        0.5 + 0.5 * math.sin(
+                            world_time * 12.0 + warning["x"] * 0.9
+                        )
+                    )
+                    color = quantize_color(
+                        tuple(min(255, int(c * pulse)) for c in base),
+                        step=16,
+                    )
+                    for dx, char in ((-1, "."), (0, "!"), (1, ".")):
+                        glyph = self.glyphs.surface(char, color)
+                        self._fg_batch.append(
+                            (glyph, (px + dx * self.cw, py))
+                        )
+                    self.bloom.add(
+                        px + self.cw // 2, py + self.ch // 2,
+                        self.cw * 2.8, base, 0.80,
+                    )
 
     def draw_slash(self, player, camera_offset):
         with self._phase("sprites"):
@@ -1016,6 +1105,13 @@ class Renderer:
                     (255, 116, 96),
                     self.overlay_font,
                 )
+            boss = next(
+                (enemy for enemy in enemies
+                 if getattr(enemy, "is_boss", False)),
+                None,
+            )
+            if boss is not None:
+                self._draw_boss_health(boss)
             if not enemies:
                 surf = self._text_surface("ALL ENEMIES SLAIN",
                                           config.HUD_CLEAR_COLOR)
@@ -1026,6 +1122,56 @@ class Renderer:
                                  surf.get_height() + 10), (x, y))
                 )
                 self._fg_batch.append((surf, (x + 8, y + 5)))
+
+    def _draw_boss_health(self, boss):
+        """A centered boss health bar with an explicit phase label."""
+        width = min(520, self._screen_size[0] - 40)
+        height = 56
+        x = (self._screen_size[0] - width) // 2
+        # Keep the boss bar below the optional F3 profiler, which occupies
+        # the top-right corner and can be taller than the normal HP rows.
+        y = 132
+        panel = pygame.Surface((width, height), pygame.SRCALPHA)
+        panel.fill(config.HUD_PANEL_COLOR)
+        if getattr(boss, "invulnerable", False):
+            phase = "INTRO - INVULNERABLE"
+        elif getattr(boss, "phase_two", False):
+            phase = "PHASE II - IGNITED"
+        else:
+            phase = "PHASE I"
+        # Keep the bar colour tied to the phase, not to the current attack
+        # telegraph, so a windup does not turn the whole health bar yellow.
+        if getattr(boss, "phase_two", False):
+            bar_color = boss.data["phase_two_color"]
+        elif getattr(boss, "invulnerable", False):
+            bar_color = boss.data["intro_color"]
+        else:
+            bar_color = boss.data["color"]
+        title = self._text_surface(
+            f"{boss.name}   {phase}",
+            bar_color,
+            self.overlay_font,
+            outline=False,
+        )
+        panel.blit(title, (10, 6))
+        hp_text = self._text_surface(
+            f"{max(0, boss.hp)}/{boss.max_hp}",
+            config.HUD_HEALTH_COLOR,
+            self.overlay_font,
+            outline=False,
+        )
+        panel.blit(hp_text, (width - hp_text.get_width() - 10, 6))
+        bar_x, bar_y, bar_w, bar_h = 10, 30, width - 20, 14
+        pygame.draw.rect(panel, (38, 24, 30),
+                         (bar_x, bar_y, bar_w, bar_h))
+        fraction = max(0.0, min(1.0, boss.hp / max(1, boss.max_hp)))
+        fill = int(bar_w * fraction)
+        if fill > 0:
+            pygame.draw.rect(panel, bar_color,
+                             (bar_x, bar_y, fill, bar_h))
+        pygame.draw.rect(panel, (235, 225, 210),
+                         (bar_x, bar_y, bar_w, bar_h), 1)
+        self._fg_batch.append((panel, (x, y)))
 
     def draw_overlay(self):
         """F3 overlay: real frame time plus every per-step cost."""

@@ -33,12 +33,5 @@ fog 0.6
 ember #ff5a3c
 lock_on_enter
 spawn 4 22
-enemy crawler 15 22
-enemy flyer 20 14
-enemy spitter 41 22
-enemy crawler 27 22
-enemy flyer 30 13
-enemy crawler 68 22
-enemy flyer 84 13
-enemy spitter 98 22
+enemy boss 72 21
 door left room2 right

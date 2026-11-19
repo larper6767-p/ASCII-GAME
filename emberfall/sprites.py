@@ -32,3 +32,16 @@ SPITTER_FRAMES = (
     (" ^ ", "(o>", "/|\\"),
     (" ^ ", "(O>", "/|\\"),
 )
+
+# Boss art is drawn directly at glyph resolution (2 glyph cells per physics
+# cell, matching BOSS_DATA's 9x4 body). 'o' cells get the eye colour.
+BOSS_FRAME = (
+    "   ▄▄▄▄▄▄▄▄▄▄▄▄   ",
+    "  ██████████████  ",
+    " ████oo████oo████ ",
+    " ████████████████ ",
+    " ████  ████  ████ ",
+    "  ██████████████  ",
+    "   ▀███    ███▀   ",
+    "    ▀▀      ▀▀    ",
+)

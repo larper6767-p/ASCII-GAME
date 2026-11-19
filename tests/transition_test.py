@@ -61,7 +61,8 @@ def test_room_files():
               room.solid_at(room.width // 2, room.height - 1))
         check(f"{rid} open sky", not room.solid_at(room.width // 2, 2))
         check(f"{rid} spawn present", room.player_spawn[1] > 0)
-        check(f"{rid} enemies", len(room.enemy_spawns) >= 3,
+        minimum_enemies = 1 if rid == "room3" else 3
+        check(f"{rid} enemies", len(room.enemy_spawns) >= minimum_enemies,
               str(len(room.enemy_spawns)))
         bad = {char for row in room.tiles for char in row} - LEGEND_CHARS
         check(f"{rid} legend chars", not bad, repr(bad))

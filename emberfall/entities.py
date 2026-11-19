@@ -462,6 +462,10 @@ ENEMY_CLASSES = {
 
 def create_enemy(kind, x, y, rng):
     """Construct the correct enemy class for a level spawn marker."""
+    if kind == "boss":
+        # Lazy import avoids a cycle: boss.py imports Enemy from this module.
+        from .boss import Boss
+        return Boss(x, y, rng)
     try:
         cls = ENEMY_CLASSES[kind]
     except KeyError:
