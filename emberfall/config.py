@@ -269,3 +269,61 @@ ENEMY_DATA = {
         "attack_color": (255, 150, 80),
     },
 }
+
+# ---------------------------------------------------------------------------
+# Boss (M7) - all boss tuning lives in this dict; enemy.py aliases it into
+# ENEMY_DATA so room validation and generic spawn code can see the type.
+# ---------------------------------------------------------------------------
+BOSS_DATA = {
+    "name": "Ember Warden",
+    "w": 9,
+    "h": 4,
+    "hp": 18,
+    "contact_damage": 2,
+    # Only the charge body is a contact hazard; the attacks use projectiles.
+    "contact_states": ("charge",),
+    "knockback_x": 0.0,
+    "knockback_y": 0.0,
+    "stun_time": 0.0,
+    "flash_time": 0.10,
+    "stun_decel": 0.0,
+    "anim_fps": 4.0,
+    "color": (190, 72, 60),
+    "windup_color": (255, 225, 90),
+    "attack_color": (255, 110, 60),
+    "phase_color": (255, 174, 82),
+    "phase_two_color": (255, 92, 52),
+    "intro_color": (220, 210, 255),
+    "intro_time": 1.80,
+    "idle_time": 1.10,
+    "min_recovery": 0.75,
+    "walk_speed": 3.5,
+    "slam_windup": 0.85,
+    "slam_active": 0.18,
+    "slam_recover": 0.90,
+    "slam_wave_speed": 18.0,
+    "slam_wave_lifetime": 3.0,
+    "slam_wave_damage": 1,
+    "slam_wave_w": 3,
+    "slam_wave_h": 2,
+    "charge_windup": 0.75,
+    "charge_speed": 30.0,
+    "charge_time": 1.10,
+    "charge_recover": 0.90,
+    "rain_windup": 1.10,
+    "rain_active": 1.40,
+    "rain_recover": 0.90,
+    "rain_count": 5,
+    "rain_interval": 0.16,
+    "rain_spread": 7.0,
+    "rain_speed": 26.0,
+    "rain_damage": 1,
+    "phase_time": 1.30,
+    "phase_threshold": 0.5,
+    "phase_combo": ("slam", "rain"),
+    "attack_choices": ("slam", "charge", "rain"),
+    "warning_color": (255, 104, 70),
+}
+
+# The generic room loader, renderer and spawner index enemy stats by kind.
+ENEMY_DATA["boss"] = BOSS_DATA

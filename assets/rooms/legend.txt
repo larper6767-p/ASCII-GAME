@@ -7,7 +7,7 @@
 #
 # Metadata (after a line containing only ---):
 #   spawn X Y
-#   enemy <type> X Y     (type: crawler, flyer, spitter)
+#   enemy <type> X Y     (type: crawler, flyer, spitter, boss)
 #   door <side> <dest_room> <dest_spawn_side>
 #       side / dest_spawn_side: left, right, top, bottom
 #   atmosphere <name>    (label for the room mood)

@@ -13,7 +13,7 @@ class Projectile:
     """A small moving hitbox that dies on solid tiles or after its lifetime."""
 
     def __init__(self, x, y, vx, vy, damage=1, color=config.WHITE, char="*",
-                 w=1, h=1, lifetime=None):
+                 w=1, h=1, lifetime=None, kind="shot"):
         self.x = float(x)
         self.y = float(y)
         self.w = w
@@ -23,6 +23,7 @@ class Projectile:
         self.damage = damage
         self.color = color
         self.char = char
+        self.kind = kind
         self.lifetime = config.PROJECTILE_LIFETIME if lifetime is None else lifetime
         self.alive = True
 
@@ -62,11 +63,11 @@ class ProjectileSystem:
         self.items.clear()
 
     def spawn(self, x, y, vx, vy, damage=1, color=config.WHITE, char="*",
-              w=1, h=1, lifetime=None):
+              w=1, h=1, lifetime=None, kind="shot"):
         projectile = Projectile(
             x, y, vx, vy,
             damage=damage, color=color, char=char,
-            w=w, h=h, lifetime=lifetime,
+            w=w, h=h, lifetime=lifetime, kind=kind,
         )
         self.items.append(projectile)
         return projectile
